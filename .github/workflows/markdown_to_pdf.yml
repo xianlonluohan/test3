@@ -127,7 +127,7 @@ jobs:
               # 移除剩余的HTML标签，保留内容
               content = re.sub(r'<[^>]+>', '', content)
               
-              # 清理多余的空行
+              # 清理多余的空白行
               content = re.sub(r'\n\s*\n\s*\n', '\n\n', content)
               
               return content
@@ -170,7 +170,7 @@ jobs:
           
           python3 convert_html.py
       
-      - name: "Create LaTeX template with improved table support"
+      - name: "Create LaTeX template with better image handling"
         run: |
           cat > header.tex << 'EOF'
           \usepackage{xeCJK}
@@ -196,6 +196,16 @@ jobs:
           \usepackage{float}
           \usepackage{caption}
           \usepackage[section]{placeins}
+          
+          % 添加表格处理包
+          \usepackage{tabularx}
+          \usepackage{makecell}
+          \usepackage{booktabs}
+          \usepackage{longtable}
+          \usepackage{adjustbox}
+          \usepackage{array}
+          \usepackage{multirow}
+          \usepackage{multicol}
           
           \definecolor{codebg}{rgb}{0.98,0.98,0.98}
           \definecolor{framecolor}{rgb}{0.8,0.8,0.8}
@@ -271,15 +281,15 @@ jobs:
           
           \AddToShipoutPictureBG{\BackgroundPicture}
           
-          % 图片处理设置 - 确保图片位置正确
+          % 图片处理设置 - 确保图像位置正确
           \graphicspath{{./}{./picture/}{./resource/}}
           
-          % 设置图片最大宽度为行宽
+          % 设置图像最大宽度为行宽
           \makeatletter
           \def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
           \makeatother
           
-          % 重新定义图片环境，确保图片位置固定，不自动生成标签
+          % 重新定义图形环境，确保图像位置固定，不自动生成标签
           \let\oldincludegraphics\includegraphics
           \renewcommand{\includegraphics}[2][]{%
             \begin{figure}[H]
@@ -288,7 +298,7 @@ jobs:
             \end{figure}%
           }
           
-          % 处理markdown中的图片引用，不自动生成标签
+          % 处理markdown中的图像引用，不自动生成标签
           \usepackage{xparse}
           \NewDocumentCommand{\mdimage}{m o}{%
             \begin{figure}[H]
@@ -301,11 +311,11 @@ jobs:
             \end{figure}%
           }
           
-          % 防止图片浮动到错误位置
+          % 防止图像浮动到错误位置
           \usepackage{float}
           \floatplacement{figure}{H}
           
-          % 确保图片按顺序出现
+          % 确保图像按顺序出现
           \usepackage{placeins}
           \AtBeginDocument{%
             \let\oldfigure\figure
@@ -315,72 +325,86 @@ jobs:
             }%
           }
           
-          % ========== 表格处理配置开始 ==========
-          % 添加表格处理包
-          \usepackage{tabularx}  % 自动调整表格宽度
-          \usepackage{array}     % 增强表格功能
-          \usepackage{booktabs}  % 专业表格样式
-          \usepackage{longtable} % 支持长表格
-          \usepackage{multirow}  % 多行单元格
-          \usepackage{makecell}  % 单元格内换行
-          \usepackage{adjustbox} % 调整框大小
+          % 表格优化设置
+          % 1. 设置表格样式
+          \renewcommand{\arraystretch}{1.2} % 增加行间距
+          \setlength{\tabcolsep}{6pt} % 设置列间距
           
-          % 表格自动换行设置
-          \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
-          \newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
-          \newcolumntype{R}[1]{>{\raggedleft\arraybackslash}p{#1}}
+          % 2. 创建智能表格处理命令
+          \newcommand{\smarttable}[1]{%
+            \begin{center}
+            \begin{adjustbox}{max width=\linewidth} % 自动调整宽度，不超过行宽
+            #1
+            \end{adjustbox}
+            \end{center}
+          }
           
-          % 自动调整表格宽度
-          \renewcommand{\tabularxcolumn}[1]{m{#1}} % 垂直居中
+          % 3. 处理特殊字符
+          \usepackage{upquote}
+          \usepackage{textcomp}
           
-          % Markdown表格转换设置
+          % 4. 为pandoc生成的表格添加样式
           \providecommand{\tightlist}{%
             \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
           
-          % 防止表格过宽 - 自动调整到页面宽度
-          \let\oldtabular\tabular
-          \let\endoldtabular\endtabular
-          \renewenvironment{tabular}[1]{%
-            \centering
-            \begin{adjustbox}{max width=\linewidth,center,keepaspectratio}%
-            \small % 使用小号字体以适应宽度
-            \begin{oldtabular}{#1}%
-          }{%
-            \end{oldtabular}%
-            \end{adjustbox}%
+          % 5. 覆盖pandoc的表格转换行为，使用更好的表格处理
+          \usepackage{etoolbox}
+          
+          % 针对pandoc生成的表格进行优化
+          \AtBeginEnvironment{longtable}{%
+            \small % 使用小号字体
+            \centering % 居中
           }
           
-          % 处理长表格
-          \let\oldlongtable\longtable
-          \let\endoldlongtable\endlongtable
-          \renewenvironment{longtable}[1]{%
-            \centering
-            \small
-            \begin{oldlongtable}{#1}%
-            \hline
-          }{%
-            \hline
-            \end{oldlongtable}%
+          \AtBeginEnvironment{tabular}{%
+            \small % 使用小号字体
+            \centering % 居中
           }
           
-          % 优化表格线样式
-          \renewcommand{\toprule}{\hline}
-          \renewcommand{\midrule}{\hline}
-          \renewcommand{\bottomrule}{\hline}
+          % 6. 防止表格过度缩放
+          \newif\ifintable
+          \intablefalse
           
-          % 表格标题样式
-          \usepackage[font=small,labelfont=bf]{caption}
+          \BeforeBeginEnvironment{tabular}{\intabletrue}
+          \AfterEndEnvironment{tabular}{\intablefalse}
           
-          % 为Pandoc表格添加自动宽度调整
-          \usepackage{environ}
-          \NewEnviron{adjusttabular}[1]{%
-            \begin{adjustbox}{max width=\linewidth,center}%
-            \begin{tabular}{#1}
-            \BODY
+          \BeforeBeginEnvironment{longtable}{\intabletrue}
+          \AfterEndEnvironment{longtable}{\intablefalse}
+          
+          % 仅在表格环境中应用特殊处理
+          \pretocmd{\includegraphics}{%
+            \ifintable
+              \setkeys{Gin}{width=0.8\linewidth} % 表格内图片适当缩放
+            \fi
+          }{}{}
+          
+          % 7. 自定义表格命令，用于处理复杂表格
+          \newcommand{\mytable}[2][\linewidth]{%
+            \begin{center}
+            \begin{adjustbox}{max width=#1}
+            \begin{tabular}{#2}
+          }
+          
+          \newcommand{\endmytable}{%
             \end{tabular}
             \end{adjustbox}
+            \end{center}
           }
-          % ========== 表格处理配置结束 ==========
+          
+          % 8. 创建小型表格环境
+          \newenvironment{smalltable}
+            {\small\centering}
+            {\normalsize}
+          
+          % 表格单元格自动换行
+          \newcolumntype{L}{>{\raggedright\arraybackslash}p{0.2\linewidth}}
+          \newcolumntype{C}{>{\centering\arraybackslash}p{0.15\linewidth}}
+          \newcolumntype{R}{>{\raggedleft\arraybackslash}p{0.15\linewidth}}
+          
+          % 9. 防止表格过宽
+          \newcommand{\fitintable}[1]{%
+            \resizebox{\textwidth}{!}{#1}%
+          }
           
           % 关闭章节标题在页眉的显示
           \usepackage{fancyhdr}
@@ -417,12 +441,16 @@ jobs:
             {1em}
             {}
           EOF
-      
+
+
+
+
+
       - name: "Set up output directory"
         run: |
           mkdir -p pdf_output
       
-      - name: "Convert Markdown to PDF with improved table support"
+      - name: "Convert Markdown to PDF with improved image placement"
         run: |
           MD_FILES=$(find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" -not -path "./pdf_output/*" | sed 's/^\.\///')
           
@@ -461,7 +489,7 @@ jobs:
             
             set +e
             
-            # 转换PDF - 使用更严格的设置确保表格位置
+            # 转换PDF - 使用更严格的设置确保图片位置
             echo "开始转换PDF..."
             
             pandoc "$md_file" \
@@ -486,12 +514,6 @@ jobs:
               -M placeins:true \
               -M floatplacement:"figure:H" \
               -M caption-justification=centered \
-              # 添加表格处理选项
-              --variable tables \
-              --variable table-use-row-colors=false \
-              --variable classoption:table \
-              --variable classoption:svgnames \
-              --variable classoption:table-caption-side=top \
               2>&1 | tee conversion.log
               
             conversion_status=$?
@@ -500,20 +522,14 @@ jobs:
             
             # 检查转换是否成功
             if [ $conversion_status -eq 0 ] && [ -f "pdf_output/$dir_name/$base_name.pdf" ] && [ -s "pdf_output/$dir_name/$base_name.pdf" ]; then
-              echo "✅ 成功转换: $md_file"
+              echo "✓ 成功转换: $md_file"
               converted_count=$((converted_count + 1))
               
               # 检查PDF文件大小
               pdf_size=$(du -h "pdf_output/$dir_name/$base_name.pdf" | cut -f1)
               echo "PDF文件大小: $pdf_size"
-              
-              # 预览PDF中的表格（通过pdftotext查看内容）
-              if command -v pdftotext >/dev/null 2>&1; then
-                echo "PDF内容预览（前20行）:"
-                pdftotext "pdf_output/$dir_name/$base_name.pdf" - | head -20
-              fi
             else
-              echo "❌ 转换失败: $md_file"
+              echo "✗ 转换失败: $md_file"
               failed_count=$((failed_count + 1))
               
               if [ -f "conversion.log" ]; then
@@ -582,8 +598,7 @@ jobs:
           echo "代码块带边框，自动换行" >> pdf_output/README.md
           echo "添加平铺式 'emakefun' 水印" >> pdf_output/README.md
           echo "包含resource目录中的程序文件" >> pdf_output/README.md
-          echo "优化：表格自动调整宽度，避免超出页面边界" >> pdf_output/README.md
-          echo "优化：修复了图片标签重复问题" >> pdf_output/README.md
+          echo "优化：去除了页眉章节标题重复，修复了图片标签重复问题" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
