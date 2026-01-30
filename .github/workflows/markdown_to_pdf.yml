@@ -1,10 +1,7 @@
-name: "Markdown to PDF Converter with Fixed Tables and Background Watermark"
+name: "Markdown to PDF Converter - Simple and Reliable"
 
 on:
   push:
-    branches: ["main", "master"]
-    tags: ["v*", "pdf-*"]
-  pull_request:
     branches: ["main", "master"]
   workflow_dispatch:
 
@@ -20,8 +17,6 @@ jobs:
     steps:
       - name: "Checkout repository"
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       
       - name: "Install dependencies"
         run: |
@@ -34,465 +29,197 @@ jobs:
             texlive-latex-recommended \
             texlive-lang-chinese \
             fonts-noto-cjk \
-            fonts-noto-cjk-extra \
-            fonts-wqy-microhei \
             fonts-wqy-zenhei \
-            lmodern \
-            tree \
-            jq \
-            python3-pip \
-            poppler-utils
-            
-          pip3 install beautifulsoup4
+            lmodern
       
-      - name: "Pre-process Markdown files to fix tables"
+      - name: "Create simple LaTeX template"
         run: |
-          cat > preprocess_markdown.py << 'EOF'
-          import os
-          import re
-          
-          def fix_markdown_tables(content):
-              """修复Markdown表格格式，确保表格正确显示"""
-              
-              # 查找所有表格
-              lines = content.split('\n')
-              in_table = False
-              table_lines = []
-              result_lines = []
-              
-              for line in lines:
-                  # 检查是否是表格行
-                  if '|' in line and (line.strip().startswith('|') or '|' in line[1:]):
-                      if not in_table:
-                          in_table = True
-                      table_lines.append(line)
-                  elif in_table:
-                      # 表格结束，处理表格
-                      if table_lines:
-                          # 修复表格格式
-                          fixed_table = fix_table_format(table_lines)
-                          result_lines.extend(fixed_table)
-                          table_lines = []
-                      in_table = False
-                      result_lines.append(line)
-                  else:
-                      result_lines.append(line)
-              
-              # 处理最后一个表格
-              if table_lines:
-                  fixed_table = fix_table_format(table_lines)
-                  result_lines.extend(fixed_table)
-              
-              return '\n'.join(result_lines)
-          
-          def fix_table_format(table_lines):
-              """修复单个表格的格式"""
-              if len(table_lines) < 2:
-                  return table_lines
-              
-              # 提取表头
-              header = table_lines[0]
-              # 提取分隔线
-              separator = table_lines[1]
-              
-              # 计算列数
-              col_count = header.count('|') - 1
-              
-              # 构建正确的分隔线
-              align_parts = []
-              for i in range(col_count):
-                  # 检查原分隔线的对齐方式
-                  if len(separator) > i:
-                      sep_part = separator.split('|')[i+1] if len(separator.split('|')) > i+1 else ''
-                      if sep_part.startswith(':') and sep_part.endswith(':'):
-                          align_parts.append(':---:')
-                      elif sep_part.startswith(':'):
-                          align_parts.append(':---')
-                      elif sep_part.endswith(':'):
-                          align_parts.append('---:')
-                      else:
-                          align_parts.append('---')
-                  else:
-                      align_parts.append('---')
-              
-              new_separator = '|' + '|'.join(align_parts) + '|'
-              
-              # 返回修复后的表格
-              result = [header, new_separator]
-              result.extend(table_lines[2:])
-              return result
-          
-          def process_markdown_files():
-              """处理所有Markdown文件"""
-              for root, dirs, files in os.walk('.'):
-                  # 跳过特定目录
-                  skip_dirs = ['.git', 'pdf_output', '__pycache__', '.github', 'node_modules']
-                  dirs[:] = [d for d in dirs if d not in skip_dirs]
-                  
-                  for file in files:
-                      if file.endswith('.md'):
-                          filepath = os.path.join(root, file)
-                          print(f"处理文件: {filepath}")
-                          
-                          try:
-                              with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                                  content = f.read()
-                              
-                              # 修复表格
-                              fixed_content = fix_markdown_tables(content)
-                              
-                              # 移除HTML标签
-                              fixed_content = re.sub(r'<[^>]+>', '', fixed_content)
-                              
-                              with open(filepath, 'w', encoding='utf-8') as f:
-                                  f.write(fixed_content)
-                                  
-                          except Exception as e:
-                              print(f"处理失败 {filepath}: {e}")
-          
-          if __name__ == "__main__":
-              process_markdown_files()
-          EOF
-          
-          python3 preprocess_markdown.py
-      
-      - name: "Create LaTeX template with proper table support"
-        run: |
-          cat > header.tex << 'EOF'
+          cat > template.tex << 'EOF'
+          \documentclass[12pt]{article}
           \usepackage{xeCJK}
           \usepackage[UTF8]{ctex}
           \setCJKmainfont{Noto Serif CJK SC}
           \setCJKsansfont{Noto Sans CJK SC}
           \setCJKmonofont{Noto Sans Mono CJK SC}
           
-          \usepackage[margin=1in]{geometry}
-          
+          \usepackage[a4paper, margin=1in]{geometry}
           \usepackage{hyperref}
           \hypersetup{
             colorlinks=true,
             linkcolor=blue,
             urlcolor=blue,
-            citecolor=blue,
-            pdfborder={0 0 0},
           }
           
-          \usepackage{listings}
-          \usepackage{xcolor}
+          % 图片支持
           \usepackage{graphicx}
           \usepackage{float}
           \usepackage{caption}
-          \usepackage[section]{placeins}
           
-          % ========== 表格处理包 ==========
+          % 表格支持 - 使用最简化的设置
           \usepackage{booktabs}
-          \usepackage{tabularx}
-          \usepackage{makecell}
           \usepackage{longtable}
           \usepackage{array}
-          \usepackage{multirow}
-          \usepackage{colortbl}
           
-          % 设置表格字体大小
-          \usepackage{etoolbox}
-          \AtBeginEnvironment{tabular}{\small}
-          \AtBeginEnvironment{longtable}{\small}
-          \AtBeginEnvironment{tabularx}{\small}
+          % 设置表格格式
+          \renewcommand{\arraystretch}{1.3}
+          \setlength{\tabcolsep}{6pt}
           
-          % 优化表格列宽
-          \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
-          \newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
-          \newcolumntype{R}[1]{>{\raggedleft\arraybackslash}p{#1}}
+          % 防止表格过宽
+          \usepackage{tabularx}
           
-          % 设置表格间距
-          \setlength{\tabcolsep}{4pt}
-          \renewcommand{\arraystretch}{1.2}
-          
-          \definecolor{codebg}{rgb}{0.98,0.98,0.98}
-          \definecolor{framecolor}{rgb}{0.8,0.8,0.8}
-          
+          % 代码高亮
+          \usepackage{listings}
+          \usepackage{xcolor}
+          \definecolor{codebg}{rgb}{0.95,0.95,0.95}
           \lstset{
             basicstyle=\ttfamily\small,
             backgroundcolor=\color{codebg},
             frame=single,
-            framesep=5pt,
-            framerule=0.5pt,
-            rulecolor=\color{framecolor},
             breaklines=true,
-            breakatwhitespace=true,
-            showstringspaces=false,
-            tabsize=2,
-            numbers=none,
           }
           
-          \usepackage{parskip}
-          \setlength{\parindent}{0pt}
-          \setlength{\parskip}{0.5em}
-          
-          \sloppy
-          \emergencystretch=2em
-          
-          % ========== 水印设置 ==========
+          % 水印
           \usepackage{draftwatermark}
           \SetWatermarkText{emakefun}
-          \SetWatermarkScale{4}
+          \SetWatermarkScale{3}
           \SetWatermarkColor[gray]{0.9}
           \SetWatermarkAngle{45}
           
-          % 图片处理设置
-          \graphicspath{{./}{./picture/}{./resource/}}
-          
-          % 设置图片最大宽度
-          \makeatletter
-          \def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
-          \makeatother
-          
-          % 图片环境
-          \let\oldincludegraphics\includegraphics
-          \renewcommand{\includegraphics}[2][]{%
-            \begin{figure}[H]
-              \centering
-              \oldincludegraphics[#1,width=\maxwidth,keepaspectratio]{#2}
-            \end{figure}%
-          }
-          
-          % 防止图片浮动
-          \usepackage{float}
-          \floatplacement{figure}{H}
-          
-          % 页眉页脚设置
+          % 页眉页脚
           \usepackage{fancyhdr}
           \pagestyle{fancy}
           \fancyhf{}
           \fancyfoot[C]{\thepage}
           \renewcommand{\headrulewidth}{0pt}
-          \renewcommand{\footrulewidth}{0pt}
           
-          % 标题格式
-          \usepackage{titlesec}
-          \titleformat{\section}
-            {\normalfont\Large\bfseries}
-            {\thesection}
-            {1em}
-            {}
+          \begin{document}
+          \$if(toc)$
+          \tableofcontents
+          \newpage
+          \$endif$
           
-          \titleformat{\subsection}
-            {\normalfont\large\bfseries}
-            {\thesubsection}
-            {1em}
-            {}
+          \$body$
           
-          \titleformat{\subsubsection}
-            {\normalfont\normalsize\bfseries}
-            {\thesubsubsection}
-            {1em}
-            {}
+          \end{document}
           EOF
       
-      - name: "Set up output directory"
+      - name: "Test conversion on one file"
         run: |
-          mkdir -p pdf_output
-      
-      - name: "Convert Markdown to PDF with proper table rendering"
-        run: |
-          # 先处理01_超声波模块介绍.md这个文件作为测试
+          # 先测试一个文件
           TEST_FILE="AI小智和超声波结合/01_超声波模块介绍.md"
           
           if [ -f "$TEST_FILE" ]; then
             echo "========================================"
-            echo "测试转换文件: $TEST_FILE"
+            echo "测试转换: $TEST_FILE"
             echo "========================================"
             
-            dir_name=$(dirname "$TEST_FILE")
-            base_name=$(basename "$TEST_FILE" .md)
+            # 显示文件内容预览
+            echo "文件预览（前50行）："
+            head -50 "$TEST_FILE"
+            echo "..."
             
-            mkdir -p "pdf_output/$dir_name"
-            
-            # 构建资源路径
-            resource_paths="$dir_name:$dir_name/picture:$dir_name/../picture:.:./picture:./resource"
-            
-            echo "资源路径: $resource_paths"
-            
-            # 预览文件内容（前100行）
-            echo "文件预览:"
-            head -100 "$TEST_FILE" | grep -n -E "^(#|!|\\|)" || true
+            # 创建输出目录
+            mkdir -p pdf_output/AI小智和超声波结合
             
             # 转换PDF
-            echo "开始转换PDF..."
+            echo "开始转换..."
             
             pandoc "$TEST_FILE" \
-              --resource-path="$resource_paths" \
-              -o "pdf_output/$dir_name/$base_name.pdf" \
+              --template=template.tex \
+              -o "pdf_output/AI小智和超声波结合/01_超声波模块介绍.pdf" \
               --pdf-engine=xelatex \
-              --listings \
-              --include-in-header=header.tex \
-              -V mainfont="Noto Serif CJK SC" \
-              -V sansfont="Noto Sans CJK SC" \
-              -V monofont="Noto Sans Mono CJK SC" \
               -V geometry:margin=1in \
               -V geometry:a4paper \
-              -V colorlinks=true \
-              -V linkcolor=blue \
-              -V urlcolor=blue \
-              -V tables:true \
-              -V table-format=pipe-tables \
-              --wrap=auto \
-              --highlight-style=tango \
-              -f markdown+pipe_tables \
-              --top-level-division=chapter \
-              2>&1 | tee test_conversion.log
+              --toc \
+              --toc-depth=2 \
+              -N \
+              2>&1 | tee conversion.log
+            
+            if [ $? -eq 0 ]; then
+              echo "✓ 转换完成"
               
-            if [ $? -eq 0 ] && [ -f "pdf_output/$dir_name/$base_name.pdf" ]; then
-              echo "✓ 测试转换成功"
-              
-              # 检查PDF文件
-              pdf_size=$(du -h "pdf_output/$dir_name/$base_name.pdf" | cut -f1)
-              echo "PDF文件大小: $pdf_size"
-              
-              # 检查是否包含表格
-              echo "检查PDF内容..."
-              pdftotext "pdf_output/$dir_name/$base_name.pdf" - | grep -i "hc-04\|rus-04" | head -5
+              # 检查文件
+              if [ -f "pdf_output/AI小智和超声波结合/01_超声波模块介绍.pdf" ]; then
+                echo "文件大小: $(du -h pdf_output/AI小智和超声波结合/01_超声波模块介绍.pdf | cut -f1)"
+                echo "页数估计: $(pdfinfo pdf_output/AI小智和超声波结合/01_超声波模块介绍.pdf 2>/dev/null | grep Pages | awk '{print $2}' || echo '未知')"
+              fi
             else
-              echo "✗ 测试转换失败"
-              cat test_conversion.log
+              echo "✗ 转换失败"
+              cat conversion.log
             fi
             
-            rm -f test_conversion.log
+            rm -f conversion.log
           else
-            echo "测试文件不存在: $TEST_FILE"
+            echo "测试文件不存在"
           fi
-          
-          echo ""
+      
+      - name: "Convert all Markdown files"
+        run: |
           echo "========================================"
-          echo "开始批量转换所有Markdown文件"
+          echo "批量转换所有Markdown文件"
           echo "========================================"
           
-          MD_FILES=$(find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" -not -path "./pdf_output/*" | sed 's/^\.\///')
+          # 查找所有.md文件
+          MD_FILES=$(find . -name "*.md" -not -path "./.*" -not -path "./pdf_output/*" -not -path "*/node_modules/*")
           
-          IFS=$'\n'
-          converted_count=0
-          failed_count=0
+          total_files=$(echo "$MD_FILES" | wc -l)
+          echo "找到 $total_files 个Markdown文件"
+          
+          success_count=0
+          fail_count=0
           
           for md_file in $MD_FILES; do
-            [ -z "$md_file" ] && continue
+            echo "处理: $md_file"
             
-            echo "处理文件: $md_file"
-            
+            # 创建输出目录
             dir_name=$(dirname "$md_file")
             base_name=$(basename "$md_file" .md)
             
             mkdir -p "pdf_output/$dir_name"
             
-            # 构建资源路径
-            md_dir=$(dirname "$md_file")
-            resource_paths="$md_dir:$md_dir/picture:$md_dir/../picture:.:./picture:./resource"
-            
-            set +e
-            
-            # 转换PDF
-            pandoc "$md_file" \
-              --resource-path="$resource_paths" \
+            # 转换
+            if pandoc "$md_file" \
+              --template=template.tex \
               -o "pdf_output/$dir_name/$base_name.pdf" \
               --pdf-engine=xelatex \
-              --listings \
-              --include-in-header=header.tex \
-              -V mainfont="Noto Serif CJK SC" \
-              -V sansfont="Noto Sans CJK SC" \
-              -V monofont="Noto Sans Mono CJK SC" \
               -V geometry:margin=1in \
               -V geometry:a4paper \
-              -V colorlinks=true \
-              -V linkcolor=blue \
-              -V urlcolor=blue \
-              -V tables:true \
-              -V table-format=pipe-tables \
-              --wrap=auto \
-              --highlight-style=tango \
-              -f markdown+pipe_tables \
-              --top-level-division=chapter \
-              2>&1 >/dev/null
+              --toc \
+              --toc-depth=2 \
+              -N \
+              >/dev/null 2>&1; then
               
-            conversion_status=$?
-            
-            set -e
-            
-            if [ $conversion_status -eq 0 ] && [ -f "pdf_output/$dir_name/$base_name.pdf" ] && [ -s "pdf_output/$dir_name/$base_name.pdf" ]; then
-              echo "  ✓ 成功"
-              converted_count=$((converted_count + 1))
+              if [ -f "pdf_output/$dir_name/$base_name.pdf" ] && [ -s "pdf_output/$dir_name/$base_name.pdf" ]; then
+                echo "  ✓ 成功"
+                success_count=$((success_count + 1))
+              else
+                echo "  ✗ 文件为空"
+                fail_count=$((fail_count + 1))
+              fi
             else
-              echo "  ✗ 失败"
-              failed_count=$((failed_count + 1))
+              echo "  ✗ 转换失败"
+              fail_count=$((fail_count + 1))
             fi
           done
           
           echo "========================================"
-          echo "转换汇总: $converted_count 成功, $failed_count 失败"
+          echo "完成: $success_count 成功, $fail_count 失败"
           echo "========================================"
       
-      - name: "Copy only resource directories (no picture directories)"
+      - name: "Copy resource files"
         run: |
-          echo "仅复制resource目录到输出目录..."
+          echo "复制resource文件..."
           
-          # 只复制resource目录，不复制picture目录
-          find pdf_output -name "*.pdf" -type f | while read pdf_file; do
+          # 查找所有有PDF文件的目录
+          find pdf_output -name "*.pdf" | while read pdf_file; do
             pdf_dir=$(dirname "$pdf_file")
-            rel_dir=${pdf_dir#pdf_output/}
+            source_dir=${pdf_dir#pdf_output/}
             
-            # 只复制resource目录
-            if [ -d "$rel_dir/resource" ]; then
-              echo "复制 $rel_dir/resource 到 $pdf_dir/"
-              cp -r "$rel_dir/resource" "$pdf_dir/" 2>/dev/null || echo "注意: 无法复制 $rel_dir/resource"
+            # 复制resource目录
+            if [ -d "$source_dir/resource" ]; then
+              echo "复制 $source_dir/resource 到 $pdf_dir/"
+              cp -r "$source_dir/resource" "$pdf_dir/" 2>/dev/null || true
             fi
-          done
-      
-      - name: "Verify PDF files"
-        run: |
-          total_pdfs=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
-          
-          if [ $total_pdfs -eq 0 ]; then
-            echo "没有生成PDF文件!"
-            exit 1
-          else
-            echo "总共生成 $total_pdfs 个PDF文件"
-            
-            # 显示总大小
-            total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; | awk '{sum+=$1} END {print int(sum/1024/1024)}')
-            echo "PDF文件总大小: ${total_size_mb}MB"
-            
-            # 列出前10个PDF文件
-            echo "前10个生成的PDF文件:"
-            find pdf_output -name "*.pdf" -type f | sort | head -10 | while read pdf_file; do
-              file_size=$(du -h "$pdf_file" | cut -f1)
-              echo "  - ${pdf_file#pdf_output/} ($file_size)"
-            done
-          fi
-      
-      - name: "Create release documentation"
-        run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            TAG_NAME="${GITHUB_REF#refs/tags/}"
-          else
-            TAG_NAME="latest"
-          fi
-          
-          echo "# PDF 文档集" > pdf_output/README.md
-          echo "" >> pdf_output/README.md
-          echo "生成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> pdf_output/README.md
-          echo "已修复表格显示问题" >> pdf_output/README.md
-          echo "添加背景水印 'emakefun'" >> pdf_output/README.md
-          echo "包含resource目录中的程序文件" >> pdf_output/README.md
-          echo "不包含picture图片目录" >> pdf_output/README.md
-          echo "" >> pdf_output/README.md
-          
-          echo "## 文件列表" >> pdf_output/README.md
-          echo "" >> pdf_output/README.md
-          
-          find pdf_output -name "*.pdf" -type f | sort | while read pdf_file; do
-            rel_path=${pdf_file#pdf_output/}
-            dir_name=$(dirname "$rel_path")
-            file_name=$(basename "$rel_path")
-            file_size=$(du -h "$pdf_file" | cut -f1)
-            
-            echo "- [$file_name]($rel_path) ($file_size)" >> pdf_output/README.md
           done
       
       - name: "Upload PDF artifacts"
