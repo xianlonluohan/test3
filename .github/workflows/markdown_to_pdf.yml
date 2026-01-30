@@ -1,4 +1,4 @@
-name: "Markdown to PDF Converter - Reliable Version"
+name: "Markdown to PDF Converter - Stable Version"
 
 on:
   push:
@@ -36,555 +36,213 @@ jobs:
             fonts-wqy-microhei \
             fonts-wqy-zenhei \
             lmodern \
-            wkhtmltopdf \
-            python3 \
-            python3-pip \
-            nodejs \
-            npm \
-            curl \
-            wget
-          
-          pip3 install markdown
-          pip3 install pdfkit
-          pip3 install PyPDF2
-          pip3 install beautifulsoup4
+            ghostscript
       
-      - name: "Create Python conversion script"
+      - name: "Create simple conversion script"
         run: |
-          cat > convert_markdown.py << 'EOF'
-          #!/usr/bin/env python3
-          """
-          使用Python将Markdown转换为PDF，解决pandoc直接转换的问题
-          """
-          import os
-          import sys
-          import markdown
-          import pdfkit
-          import tempfile
-          import shutil
-          from pathlib import Path
-          import base64
-          import re
+          # 创建转换脚本
+          cat << 'SCRIPT_EOF' > convert_md.sh
+          #!/bin/bash
+          set -e
           
-          def convert_markdown_to_pdf(md_file, output_pdf):
-              """
-              将Markdown文件转换为PDF
-              """
-              try:
-                  print(f"开始转换: {md_file}")
-                  
-                  # 读取Markdown内容
-                  with open(md_file, 'r', encoding='utf-8') as f:
-                      content = f.read()
-                  
-                  # 修复图片路径
-                  content = fix_image_paths(content, md_file)
-                  
-                  # 修复表格格式
-                  content = fix_tables(content)
-                  
-                  # 修复代码块
-                  content = fix_code_blocks(content)
-                  
-                  # 添加CSS样式
-                  css = '''
-                  <style>
-                      body {
-                          font-family: 'Noto Serif CJK SC', 'SimSun', serif;
-                          font-size: 14px;
-                          line-height: 1.6;
-                          margin: 40px;
-                          color: #333;
-                      }
-                      h1, h2, h3, h4, h5, h6 {
-                          font-family: 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
-                          color: #2c3e50;
-                          margin-top: 30px;
-                          margin-bottom: 15px;
-                      }
-                      h1 { font-size: 28px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-                      h2 { font-size: 24px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
-                      h3 { font-size: 20px; }
-                      
-                      table {
-                          border-collapse: collapse;
-                          width: 100%;
-                          margin: 20px 0;
-                          font-size: 12px;
-                          box-shadow: 0 0 5px rgba(0,0,0,0.1);
-                      }
-                      th, td {
-                          border: 1px solid #ddd;
-                          padding: 8px;
-                          text-align: left;
-                      }
-                      th {
-                          background-color: #f2f2f2;
-                          font-weight: bold;
-                      }
-                      tr:nth-child(even) {
-                          background-color: #f9f9f9;
-                      }
-                      
-                      img {
-                          max-width: 90%;
-                          height: auto;
-                          display: block;
-                          margin: 20px auto;
-                          box-shadow: 0 0 5px rgba(0,0,0,0.1);
-                          border-radius: 4px;
-                      }
-                      
-                      pre, code {
-                          font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-                          font-size: 13px;
-                          background-color: #f5f5f5;
-                          border: 1px solid #ddd;
-                          border-radius: 4px;
-                      }
-                      pre {
-                          padding: 15px;
-                          overflow-x: auto;
-                          margin: 20px 0;
-                      }
-                      code {
-                          padding: 2px 4px;
-                      }
-                      
-                      .watermark {
-                          position: fixed;
-                          top: 50%;
-                          left: 50%;
-                          transform: translate(-50%, -50%) rotate(-45deg);
-                          font-size: 80px;
-                          color: rgba(0, 0, 0, 0.1);
-                          z-index: -1;
-                          font-weight: bold;
-                          opacity: 0.3;
-                          pointer-events: none;
-                      }
-                      .watermark-grid {
-                          position: fixed;
-                          top: 0;
-                          left: 0;
-                          width: 100%;
-                          height: 100%;
-                          z-index: -1;
-                          pointer-events: none;
-                          opacity: 0.1;
-                      }
-                      .watermark-grid div {
-                          position: absolute;
-                          font-size: 20px;
-                          color: rgba(0, 0, 0, 0.2);
-                          transform: rotate(45deg);
-                      }
-                      
-                      blockquote {
-                          border-left: 4px solid #3498db;
-                          margin: 20px 0;
-                          padding: 10px 20px;
-                          background-color: #f8f9fa;
-                          font-style: italic;
-                      }
-                      
-                      .page-break {
-                          page-break-after: always;
-                      }
-                      
-                      .center {
-                          text-align: center;
-                      }
-                      
-                      .right {
-                          text-align: right;
-                      }
-                  </style>
-                  
-                  <div class="watermark">emakefun</div>
-                  <div class="watermark-grid">
-                      <!-- 这里可以通过JavaScript生成网格水印，但为了简化，我们只用中心水印 -->
-                  </div>
-                  '''
-                  
-                  # 将Markdown转换为HTML
-                  md_extensions = [
-                      'extra',
-                      'tables',
-                      'fenced_code',
-                      'codehilite',
-                      'toc',
-                      'nl2br',
-                      'sane_lists'
-                  ]
-                  
-                  html_content = markdown.markdown(content, extensions=md_extensions)
-                  
-                  # 完整的HTML文档
-                  full_html = f'''
-                  <!DOCTYPE html>
-                  <html lang="zh-CN">
-                  <head>
-                      <meta charset="UTF-8">
-                      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                      <title>{Path(md_file).stem}</title>
-                      {css}
-                  </head>
-                  <body>
-                      {html_content}
-                  </body>
-                  </html>
-                  '''
-                  
-                  # 保存HTML文件用于调试
-                  html_file = output_pdf.replace('.pdf', '.html')
-                  with open(html_file, 'w', encoding='utf-8') as f:
-                      f.write(full_html)
-                  
-                  # 配置wkhtmltopdf
-                  options = {
-                      'page-size': 'A4',
-                      'margin-top': '20mm',
-                      'margin-right': '20mm',
-                      'margin-bottom': '20mm',
-                      'margin-left': '20mm',
-                      'encoding': 'UTF-8',
-                      'no-outline': None,
-                      'enable-local-file-access': None,
-                      'disable-smart-shrinking': None,
-                      'zoom': 1.0,
-                      'footer-center': '[page]/[topage]',
-                      'footer-font-size': '10',
-                      'footer-font-name': 'Noto Sans CJK SC',
-                  }
-                  
-                  # 转换为PDF
-                  pdfkit.from_string(full_html, output_pdf, options=options)
-                  
-                  print(f"✓ 转换完成: {output_pdf}")
-                  return True
-                  
-              except Exception as e:
-                  print(f"✗ 转换失败 {md_file}: {str(e)}")
-                  import traceback
-                  traceback.print_exc()
-                  return False
+          echo "开始转换Markdown文件到PDF..."
           
-          def fix_image_paths(content, md_file):
-              """修复图片路径"""
-              # 获取Markdown文件所在目录
-              md_dir = os.path.dirname(md_file)
-              
-              # 正则表达式匹配图片
-              pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
-              
-              def replace_image(match):
-                  alt_text = match.group(1)
-                  img_path = match.group(2)
-                  
-                  # 如果已经是完整URL，直接返回
-                  if img_path.startswith('http://') or img_path.startswith('https://'):
-                      return match.group(0)
-                  
-                  # 修复常见的图片路径问题
-                  original_path = img_path
-                  
-                  # 尝试多种路径组合
-                  possible_paths = [
-                      img_path,
-                      os.path.join(md_dir, img_path),
-                      os.path.join(md_dir, 'picture', img_path),
-                      os.path.join(os.path.dirname(md_dir), 'picture', img_path),
-                      os.path.join(md_dir, '..', 'picture', img_path),
-                      os.path.join('.', img_path),
-                      os.path.join('.', 'picture', img_path),
-                  ]
-                  
-                  # 找到实际存在的图片文件
-                  actual_path = None
-                  for path in possible_paths:
-                      if os.path.exists(path):
-                          actual_path = path
-                          break
-                  
-                  if actual_path:
-                      # 使用绝对路径
-                      return f'![{alt_text}]({actual_path})'
-                  else:
-                      print(f"警告: 找不到图片文件: {original_path}")
-                      # 返回原始内容，wkhtmltopdf可能会处理相对路径
-                      return match.group(0)
-              
-              # 替换所有图片引用
-              return re.sub(pattern, replace_image, content)
+          # 创建输出目录
+          mkdir -p pdf_output
           
-          def fix_tables(content):
-              """修复表格格式"""
-              # 确保表格前后有空行
-              content = re.sub(r'\n\|', '\n\n|', content)
-              content = re.sub(r'\|\n', '|\n\n', content)
-              
-              # 修复表格分隔线
-              lines = content.split('\n')
-              in_table = False
-              table_lines = []
-              
-              for i, line in enumerate(lines):
-                  # 检查是否为表格行
-                  is_table_line = line.strip().startswith('|') and '|' in line[1:]
-                  
-                  if is_table_line:
-                      in_table = True
-                      table_lines.append(line)
-                  elif in_table and line.strip() == '':
-                      # 空行结束表格
-                      in_table = False
-                  elif in_table:
-                      # 表格继续
-                      table_lines.append(line)
-              
-              # 这里可以添加更复杂的表格处理逻辑
-              # 但markdown库通常能很好处理表格
-              
-              return content
-          
-          def fix_code_blocks(content):
-              """修复代码块"""
-              # 确保代码块使用正确的语法
-              # 将缩进代码块转换为围栏代码块
-              lines = content.split('\n')
-              in_code_block = False
-              result_lines = []
-              
-              for line in lines:
-                  # 检查是否进入代码块
-                  if line.strip().startswith('```'):
-                      in_code_block = not in_code_block
-                      result_lines.append(line)
-                  elif in_code_block:
-                      result_lines.append(line)
-                  elif line.startswith('    ') or line.startswith('\t'):
-                      # 缩进代码块
-                      if not in_code_block:
-                          result_lines.append('```')
-                          in_code_block = True
-                      result_lines.append(line.lstrip())
-                  else:
-                      if in_code_block:
-                          result_lines.append('```')
-                          in_code_block = False
-                      result_lines.append(line)
-              
-              if in_code_block:
-                  result_lines.append('```')
-              
-              return '\n'.join(result_lines)
-          
-          def main():
-              """主函数"""
-              # 创建输出目录
-              os.makedirs('pdf_output', exist_ok=True)
-              
-              # 查找所有Markdown文件
-              markdown_files = []
-              for root, dirs, files in os.walk('.'):
-                  # 跳过某些目录
-                  if any(skip in root for skip in ['.git', 'pdf_output', 'node_modules', '__pycache__']):
-                      continue
-                  
-                  for file in files:
-                      if file.endswith('.md'):
-                          markdown_files.append(os.path.join(root, file))
-              
-              print(f"找到 {len(markdown_files)} 个Markdown文件")
-              
-              success_count = 0
-              fail_count = 0
-              
-              for md_file in markdown_files:
-                  # 计算输出路径
-                  rel_path = os.path.relpath(md_file, '.')
-                  output_dir = os.path.join('pdf_output', os.path.dirname(rel_path))
-                  os.makedirs(output_dir, exist_ok=True)
-                  
-                  pdf_file = os.path.join(output_dir, f'{os.path.splitext(os.path.basename(md_file))[0]}.pdf')
-                  
-                  if convert_markdown_to_pdf(md_file, pdf_file):
-                      success_count += 1
-                  else:
-                      fail_count += 1
-                  
-                  # 避免资源占用过高
-                  if (success_count + fail_count) % 5 == 0:
-                      print(f"进度: {success_count + fail_count}/{len(markdown_files)}")
-              
-              print(f"\n转换完成: {success_count} 成功, {fail_count} 失败")
-              
-              if success_count == 0:
-                  return 1
-              return 0
-          
-          if __name__ == '__main__':
-              sys.exit(main())
-          EOF
-          
-          chmod +x convert_markdown.py
-      
-      - name: "Run Python conversion script"
-        run: |
-          echo "开始使用Python脚本转换Markdown文件..."
-          python3 convert_markdown.py
-      
-      - name: "Fallback to direct conversion if needed"
-        run: |
-          # 检查是否生成了PDF
-          pdf_count=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
-          
-          if [ $pdf_count -eq 0 ]; then
-            echo "Python转换失败，尝试备用方案..."
+          # 查找所有Markdown文件
+          find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" -not -path "./pdf_output/*" | while read md_file; do
+            echo "处理文件: $md_file"
             
-            # 创建简单的转换脚本
-            cat > simple_convert.sh << 'EOF'
-            #!/bin/bash
-            set -e
+            # 获取目录和文件名
+            dir_name=$(dirname "$md_file")
+            base_name=$(basename "$md_file" .md)
             
-            echo "使用备用方案转换Markdown文件..."
+            # 创建输出目录
+            mkdir -p "pdf_output/$dir_name"
             
-            # 查找Markdown文件
-            find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" -not -path "./pdf_output/*" | while read md_file; do
-                echo "处理: $md_file"
-                
-                # 创建输出目录
-                output_dir="pdf_output/$(dirname "$(realpath --relative-to=. "$md_file")")"
-                mkdir -p "$output_dir"
-                
-                # 输出文件名
-                output_pdf="$output_dir/$(basename "$md_file" .md).pdf"
-                
-                # 使用最简单的pandoc命令
-                pandoc "$md_file" \
-                  -o "$output_pdf" \
-                  --pdf-engine=xelatex \
-                  -V mainfont="Noto Serif CJK SC" \
-                  -V geometry:margin=1in \
-                  -V geometry:a4paper \
-                  --toc \
-                  --toc-depth=3 \
-                  -V colorlinks=true \
-                  -V linkcolor=blue \
-                  -V urlcolor=blue \
-                  --highlight-style=tango \
-                  -s
-            done
-            EOF
+            # 构建输出路径
+            output_pdf="pdf_output/$dir_name/$base_name.pdf"
             
-            chmod +x simple_convert.sh
-            ./simple_convert.sh
+            # 尝试转换
+            echo "转换到: $output_pdf"
+            
+            # 使用最基本的pandoc命令，避免复杂配置
+            if pandoc "$md_file" \
+              -o "$output_pdf" \
+              --pdf-engine=xelatex \
+              --variable mainfont="Noto Serif CJK SC" \
+              --variable sansfont="Noto Sans CJK SC" \
+              --variable monofont="Noto Sans Mono CJK SC" \
+              --variable geometry:margin=1in \
+              --variable geometry:a4paper \
+              --variable colorlinks=true \
+              --variable linkcolor=blue \
+              --variable urlcolor=blue; then
+              
+              if [ -f "$output_pdf" ] && [ -s "$output_pdf" ]; then
+                echo "✓ 转换成功"
+                pdf_size=$(du -h "$output_pdf" | cut -f1)
+                echo "文件大小: $pdf_size"
+              else
+                echo "✗ 转换失败: 输出文件为空"
+              fi
+            else
+              echo "✗ 转换失败: pandoc命令错误"
+            fi
+            
+            echo ""
+          done
+          
+          # 统计结果
+          total_pdfs=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
+          echo "========================================"
+          echo "转换完成"
+          echo "总PDF文件数: $total_pdfs"
+          echo "========================================"
+          
+          if [ $total_pdfs -eq 0 ]; then
+            echo "错误: 没有生成任何PDF文件!"
+            exit 1
           fi
+          SCRIPT_EOF
+          
+          chmod +x convert_md.sh
       
-      - name: "Verify PDF generation"
+      - name: "Create simple LaTeX template"
         run: |
-          echo "验证PDF生成结果..."
+          # 创建简单的LaTeX模板
+          cat << 'LATEX_EOF' > simple_template.tex
+          \documentclass[a4paper]{article}
+          
+          % 中文支持
+          \usepackage{xeCJK}
+          \setCJKmainfont{Noto Serif CJK SC}
+          
+          % 页面设置
+          \usepackage[margin=1in]{geometry}
+          
+          % 超链接
+          \usepackage{hyperref}
+          \hypersetup{
+            colorlinks=true,
+            linkcolor=blue,
+            urlcolor=blue,
+            citecolor=blue,
+          }
+          
+          % 图片支持
+          \usepackage{graphicx}
+          \usepackage{float}
+          
+          % 表格支持
+          \usepackage{tabularx}
+          \usepackage{longtable}
+          \usepackage{array}
+          
+          % 代码块
+          \usepackage{listings}
+          \usepackage{xcolor}
+          
+          % 段落设置
+          \usepackage{parskip}
+          \setlength{\parindent}{0pt}
+          
+          % 防止溢出
+          \sloppy
+          
+          % 水印
+          \usepackage{draftwatermark}
+          \SetWatermarkText{emakefun}
+          \SetWatermarkScale{4}
+          \SetWatermarkColor[gray]{0.9}
+          \SetWatermarkAngle{45}
+          
+          \begin{document}
+          
+          \LATEX_EOF
+      
+      - name: "Run conversion"
+        run: |
+          ./convert_md.sh
+      
+      - name: "Check and verify PDFs"
+        run: |
+          echo "检查生成的PDF文件..."
           
           total_pdfs=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
           
           if [ $total_pdfs -eq 0 ]; then
-            echo "错误: 没有生成任何PDF文件!"
+            echo "错误: 没有生成PDF文件!"
             
-            # 尝试最后的手段
-            echo "尝试最后的手段: 直接转换一个文件..."
+            # 显示目录结构，帮助调试
+            echo "当前目录结构:"
+            tree -L 3 -I 'node_modules|.git|pdf_output' || ls -la
             
-            # 找一个示例文件
-            sample_file=$(find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" | head -1)
+            echo ""
+            echo "Markdown文件:"
+            find . -name "*.md" -not -path "./.*" | head -10
             
-            if [ -n "$sample_file" ]; then
-              echo "使用文件: $sample_file"
-              
-              mkdir -p pdf_output/test
-              
-              # 使用最简配置
-              pandoc "$sample_file" \
-                -o "pdf_output/test/test.pdf" \
-                --pdf-engine=xelatex \
-                -V mainfont="Noto Serif CJK SC"
-            fi
-            
-            # 重新计数
-            total_pdfs=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
-          fi
-          
-          echo "总共生成 $total_pdfs 个PDF文件"
-          
-          if [ $total_pdfs -eq 0 ]; then
-            echo "严重错误: 无法生成PDF文件!"
-            echo "可能的解决方案:"
-            echo "1. 检查Markdown文件格式"
-            echo "2. 确保图片文件存在"
-            echo "3. 检查文件编码"
             exit 1
           fi
+          
+          echo "成功生成 $total_pdfs 个PDF文件"
+          echo ""
+          echo "PDF文件列表:"
+          find pdf_output -name "*.pdf" -type f | sort
       
-      - name: "Copy resources"
+      - name: "Copy resource files"
         run: |
           echo "复制资源文件..."
           
           # 复制resource目录
-          find . -type d -name "resource" | while read res_dir; do
-            rel_path=$(echo "$res_dir" | sed 's|^\./||')
+          find pdf_output -name "*.pdf" -type f | while read pdf_file; do
+            pdf_dir=$(dirname "$pdf_file")
+            rel_dir=${pdf_dir#pdf_output/}
             
-            # 查找对应的PDF目录
-            pdf_base=${rel_path%/resource}
-            
-            find pdf_output -type d -path "*$pdf_base*" | while read pdf_dir; do
-              echo "复制资源到 $pdf_dir"
-              cp -r "$res_dir" "$pdf_dir/" 2>/dev/null || true
-            done
+            # 如果原始目录有resource，复制到输出目录
+            if [ -d "$rel_dir/resource" ]; then
+              echo "复制 $rel_dir/resource 到 $pdf_dir/"
+              cp -r "$rel_dir/resource" "$pdf_dir/" 2>/dev/null || true
+            fi
           done
       
-      - name: "Create summary"
+      - name: "Create summary report"
         run: |
-          echo "# PDF转换报告" > pdf_output/README.md
+          echo "# PDF文档转换报告" > pdf_output/README.md
           echo "" >> pdf_output/README.md
           echo "生成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
-          pdf_files=$(find pdf_output -name "*.pdf" -type f | sort)
-          pdf_count=$(echo "$pdf_files" | wc -l)
-          
+          # 统计信息
+          pdf_count=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
           echo "## 统计信息" >> pdf_output/README.md
-          echo "- 总文件数: $pdf_count" >> pdf_output/README.md
-          
-          # 按目录分组显示
+          echo "- 总PDF文件数: $pdf_count" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
+          
+          # 文件列表
           echo "## 文件列表" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
-          # 使用关联数组存储目录和文件
-          declare -A dir_map
-          
-          for pdf in $pdf_files; do
-            rel_path=${pdf#pdf_output/}
+          # 按目录分组显示
+          current_dir=""
+          find pdf_output -name "*.pdf" -type f | sort | while read pdf_file; do
+            rel_path=${pdf_file#pdf_output/}
             dir_name=$(dirname "$rel_path")
             file_name=$(basename "$rel_path")
-            file_size=$(du -h "$pdf" 2>/dev/null | cut -f1 || echo "未知")
+            file_size=$(du -h "$pdf_file" 2>/dev/null | cut -f1 || echo "未知")
             
-            if [ -z "${dir_map[$dir_name]}" ]; then
-              dir_map[$dir_name]=""
+            if [ "$current_dir" != "$dir_name" ]; then
+              current_dir="$dir_name"
+              if [ "$dir_name" = "." ]; then
+                echo "### 根目录" >> pdf_output/README.md
+              else
+                echo "### $dir_name/" >> pdf_output/README.md
+              fi
+              echo "" >> pdf_output/README.md
             fi
             
-            dir_map[$dir_name]="${dir_map[$dir_name]}- [$file_name]($rel_path) ($file_size)\n"
-          done
-          
-          # 输出目录结构
-          for dir in "${!dir_map[@]}"; do
-            if [ "$dir" = "." ]; then
-              echo "### 根目录" >> pdf_output/README.md
-            else
-              echo "### $dir/" >> pdf_output/README.md
-            fi
-            echo "" >> pdf_output/README.md
-            echo -e "${dir_map[$dir]}" >> pdf_output/README.md
-            echo "" >> pdf_output/README.md
+            echo "- [$file_name]($rel_path) ($file_size)" >> pdf_output/README.md
           done
       
       - name: "Upload PDF artifacts"
