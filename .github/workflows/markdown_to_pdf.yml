@@ -251,19 +251,7 @@ jobs:
             \renewcommand{\arraystretch}{1.1}
           }
           
-          % 处理宽表格
-          \newcommand{\specialtabular}[2][\textwidth]{%
-            \noindent%
-            \begin{minipage}{\textwidth}%
-            \centering%
-            \footnotesize%
-            \begin{tabular}{#2}%
-          }
-          
-          \newcommand{\endspecialtabular}{%
-            \end{tabular}%
-            \end{minipage}%
-          }
+          % 处理宽表格 - 移除重复定义的\specialtabular和\endspecialtabular
           % ================== 表格优化结束 ==================
           
           \definecolor{codebg}{rgb}{0.98,0.98,0.98}
@@ -466,6 +454,7 @@ jobs:
             # 转换PDF - 使用更严格的设置确保图片位置
             echo "开始转换PDF..."
             
+            # 添加表格处理参数
             pandoc "$md_file" \
               --resource-path="$resource_paths" \
               -o "pdf_output/$dir_name/$base_name.pdf" \
@@ -488,7 +477,6 @@ jobs:
               -M placeins:true \
               -M floatplacement:"figure:H" \
               -M caption-justification=centered \
-              # 添加表格处理参数
               --variable tables \
               --variable longtable \
               --variable booktabs \
@@ -579,6 +567,7 @@ jobs:
           echo "包含resource目录中的程序文件" >> pdf_output/README.md
           echo "优化：去除了页眉章节标题重复，修复了图片标签重复问题" >> pdf_output/README.md
           echo "优化：添加表格显示优化，解决表格过大问题" >> pdf_output/README.md
+          echo "修复：解决了LaTeX命令重复定义和Shell参数错误问题" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
