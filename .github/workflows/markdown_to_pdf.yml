@@ -33,7 +33,11 @@ jobs:
             texlive-fonts-recommended \
             texlive-latex-recommended \
             texlive-lang-chinese \
+            texlive-latex-base \
+            texlive-latex-recommended \
+            texlive-pictures \
             texlive-science \
+            texlive-fonts-extra \
             fonts-noto-cjk \
             fonts-noto-cjk-extra \
             fonts-wqy-microhei \
@@ -44,6 +48,114 @@ jobs:
             python3-pip
           
           pip3 install beautifulsoup4
+      
+      - name: "Pre-process Markdown files for table improvements"
+        run: |
+          cat > preprocess_tables.py << 'EOF'
+          import os
+          import re
+          
+          def preprocess_markdown_tables(content):
+              """预处理Markdown中的表格，确保表格结构正确，特别是包含图片的表格"""
+              
+              # 查找所有包含图片的表格
+              table_pattern = re.compile(
+                  r'(\|.*?\|.*?\n)+\|?-+\|.*?\n(\|.*?\|.*?\n)+',
+                  re.MULTILINE | re.DOTALL
+              )
+              
+              def fix_table_with_images(match):
+                  table_text = match.group(0)
+                  
+                  # 检查表格中是否有图片
+                  if '![' in table_text or '<img' in table_text:
+                      # 这是一个包含图片的表格
+                      # 确保表格分隔符正确
+                      lines = table_text.strip().split('\n')
+                      
+                      fixed_lines = []
+                      for i, line in enumerate(lines):
+                          # 确保分隔行格式正确
+                          if i == 1 and '|-' in line:
+                              # 这是分隔行，确保格式正确
+                              line = re.sub(r'\|-+\|', lambda m: '|' + '-'*(len(m.group())-2) + '|', line)
+                          
+                          # 确保每行以|开头和结尾
+                          if line.strip() and not line.startswith('|'):
+                              line = '|' + line
+                          if line.strip() and not line.endswith('|'):
+                              line = line + '|'
+                          
+                          fixed_lines.append(line)
+                      
+                      return '\n'.join(fixed_lines) + '\n'
+                  
+                  return table_text
+              
+              # 修复包含图片的表格
+              content = table_pattern.sub(fix_table_with_images, content)
+              
+              # 处理特殊的表格结构
+              # 将<img>标签转换为Markdown图片格式
+              img_pattern = re.compile(r'<img\s+([^>]+)>', re.IGNORECASE)
+              
+              def replace_img_in_table(match):
+                  attrs_str = match.group(1)
+                  
+                  src_match = re.search(r'src\s*=\s*["\']([^"\']+)["\']', attrs_str)
+                  alt_match = re.search(r'alt\s*=\s*["\']([^"\']*)["\']', attrs_str)
+                  
+                  src = src_match.group(1) if src_match else ''
+                  alt = alt_match.group(1) if alt_match else ''
+                  
+                  # 清理src路径
+                  if src:
+                      src = re.sub(r'^\./', '', src)
+                      src = re.sub(r'^/', '', src)
+                  
+                  return f'![{alt}]({src})'
+              
+              content = img_pattern.sub(replace_img_in_table, content)
+              
+              return content
+          
+          def process_markdown_file(filepath):
+              print(f"预处理文件: {filepath}")
+              try:
+                  with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                      content = f.read()
+                  
+                  # 预处理表格
+                  processed_content = preprocess_markdown_tables(content)
+                  
+                  # 保存处理后的文件
+                  with open(filepath, 'w', encoding='utf-8') as f:
+                      f.write(processed_content)
+                      
+                  return True
+              except Exception as e:
+                  print(f"预处理失败 {filepath}: {e}")
+                  import traceback
+                  traceback.print_exc()
+                  return False
+          
+          # 遍历所有Markdown文件
+          processed = 0
+          for root, dirs, files in os.walk('.'):
+              # 跳过特定目录
+              skip_dirs = ['.git', 'pdf_output', '__pycache__', '.github', 'node_modules']
+              dirs[:] = [d for d in dirs if d not in skip_dirs]
+              
+              for file in files:
+                  if file.endswith('.md'):
+                      filepath = os.path.join(root, file)
+                      if process_markdown_file(filepath):
+                          processed += 1
+          
+          print(f"表格预处理完成: {processed} 个文件")
+          EOF
+          
+          python3 preprocess_tables.py
       
       - name: "Create improved HTML to Markdown converter"
         run: |
@@ -171,24 +283,7 @@ jobs:
           
           python3 convert_html.py
       
-      - name: "Find all markdown files"
-        run: |
-          echo "查找所有Markdown文件..."
-          # 查找所有.md文件，排除一些特定的目录
-          find . -type f -name "*.md" \
-            ! -path "./.git/*" \
-            ! -path "./pdf_output/*" \
-            ! -path "./node_modules/*" \
-            ! -path "./__pycache__/*" \
-            ! -name "README.md" \
-            ! -name "readme.md" \
-          > md_files.txt
-          
-          echo "找到的Markdown文件:"
-          cat md_files.txt
-          echo "总共找到 $(wc -l < md_files.txt) 个Markdown文件"
-      
-      - name: "Create improved LaTeX template for tables"
+      - name: "Create LaTeX template with improved table support"
         run: |
           cat > header.tex << 'EOF'
           \usepackage{xeCJK}
@@ -368,61 +463,55 @@ jobs:
             {1em}
             {}
           
-          % ========== 表格处理优化 ==========
+          % ====== 表格优化部分 ======
+          \usepackage{array}
           \usepackage{tabularx}
+          \usepackage{longtable}
           \usepackage{booktabs}
           \usepackage{multirow}
-          \usepackage{multicol}
           \usepackage{makecell}
-          \usepackage{array}
-          \usepackage{longtable}
-          \usepackage{ltablex}
           
-          % 设置表格字体大小和行距
-          \renewcommand{\arraystretch}{1.3}
+          % 设置表格样式
+          \renewcommand{\arraystretch}{1.2} % 增加行高
+          \setlength{\tabcolsep}{4pt} % 设置列间距
           
-          % 自定义表格列类型
-          \newcolumntype{L}{>{\raggedright\arraybackslash}X}
-          \newcolumntype{C}{>{\centering\arraybackslash}X}
-          \newcolumntype{R}{>{\raggedleft\arraybackslash}X}
+          % 使表格中的图片自适应单元格
+          \newcommand{\tableimage}[2][\linewidth]{%
+            \raisebox{-.5\height}{\includegraphics[width=#1,keepaspectratio]{#2}}%
+          }
           
-          % 自动调整表格列宽
-          \newcolumntype{Y}{>{\centering\arraybackslash}p{\dimexpr.2\linewidth-2\tabcolsep}}
-          \newcolumntype{Z}{>{\centering\arraybackslash}p{\dimexpr.25\linewidth-2\tabcolsep}}
+          % 处理Markdown表格的特殊情况
+          \usepackage{environ}
+          \NewEnviron{markdowntable}{%
+            \begin{center}
+            \begin{tabularx}{\linewidth}{X|X}
+              \BODY
+            \end{tabularx}
+            \end{center}
+          }
           
-          % 设置表格边框
+          % 重新定义表格环境，确保表格在页面中正确显示
+          \AtBeginDocument{%
+            \renewcommand{\tabular}{\begin{center}\begin{tabular}}
+            \renewcommand{\endtabular}{\end{tabular}\end{center}}
+          }
+          
+          % 处理复杂的表格结构
           \usepackage{colortbl}
-          \arrayrulecolor{gray!50}
+          \usepackage{adjustbox}
           
-          % 处理表格内的图片
-          \newcommand{\tableimage}[2][0.9\linewidth]{%
-            \raisebox{-0.5\baselineskip}{\includegraphics[width=#1]{#2}}%
-          }
+          % 确保长表格可以跨页
+          \usepackage{ltablex}
+          \keepXColumns
           
-          % 优化表格跨页
-          \usepackage{supertabular}
+          % 表格中文本自动换行
+          \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+          \newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+          \newcolumntype{R}[1]{>{\raggedleft\arraybackslash}p{#1}}
           
-          % 设置表格标题格式
-          \captionsetup[table]{justification=centering}
-          
-          % 重定义longtable环境，使其更适合复杂表格
-          \let\oldlongtable\longtable
-          \let\endoldlongtable\endlongtable
-          \renewenvironment{longtable}[1]
-            {\footnotesize\oldlongtable{#1}}
-            {\endoldlongtable}
-          
-          % 重定义tabular环境
-          \let\oldtabular\tabular
-          \let\endoldtabular\endtabular
-          \renewenvironment{tabular}[1]
-            {\footnotesize\begin{oldtabular}{#1}}
-            {\end{oldtabular}}
-          
-          % 处理表格中的换行
-          \newcommand{\specialcell}[2][c]{%
-            \begin{tabular}[#1]{@{}c@{}}#2\end{tabular}%
-          }
+          % 表格中图片的最大宽度
+          \newlength{\tableimgwidth}
+          \setlength{\tableimgwidth}{0.8\linewidth}
           EOF
       
       - name: "Set up output directory"
@@ -431,18 +520,19 @@ jobs:
       
       - name: "Convert Markdown to PDF with improved table handling"
         run: |
-          # 读取文件列表
+          MD_FILES=$(find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" -not -path "./pdf_output/*" | sed 's/^\.\///')
+          
+          IFS=$'\n'
           converted_count=0
           failed_count=0
           
-          while IFS= read -r md_file; do
+          for md_file in $MD_FILES; do
             [ -z "$md_file" ] && continue
             
             echo "========================================"
             echo "处理文件: $md_file"
             echo "========================================"
             
-            # 获取目录和基本文件名
             dir_name=$(dirname "$md_file")
             base_name=$(basename "$md_file" .md)
             
@@ -457,10 +547,16 @@ jobs:
             
             echo "资源路径: $resource_paths"
             
+            # 检查文件中的表格
+            echo "检查文件中的表格结构:"
+            if [ -f "$md_file" ]; then
+              grep -n '|.*|' "$md_file" | head -5 || true
+            fi
+            
             set +e
             
-            # 转换PDF - 使用优化的设置确保表格显示良好
-            echo "开始转换PDF..."
+            # 转换PDF - 使用表格优化设置
+            echo "开始转换PDF（启用表格优化）..."
             
             pandoc "$md_file" \
               --resource-path="$resource_paths" \
@@ -482,12 +578,10 @@ jobs:
               --top-level-division=chapter \
               -M graphics:true \
               -M placeins:true \
-              -M floatplacement:"figure:H,table:H" \
+              -M floatplacement:"figure:H" \
               -M caption-justification=centered \
-              -V tables \
-              -V longtable \
-              -V booktabs \
-              --variable=linestretch:1.25 \
+              -M table-use-row-colors=true \
+              -M table-caption-side=top \
               2>&1 | tee conversion.log
               
             conversion_status=$?
@@ -502,20 +596,26 @@ jobs:
               # 检查PDF文件大小
               pdf_size=$(du -h "pdf_output/$dir_name/$base_name.pdf" | cut -f1)
               echo "PDF文件大小: $pdf_size"
+              
+              # 检查PDF中的表格
+              echo "检查PDF中的表格效果..."
+              if command -v pdftotext &> /dev/null; then
+                pdftotext "pdf_output/$dir_name/$base_name.pdf" - | grep -A5 -B5 "|" | head -20 || true
+              fi
             else
               echo "✗ 转换失败: $md_file"
               failed_count=$((failed_count + 1))
               
               if [ -f "conversion.log" ]; then
                 echo "转换日志:"
-                tail -50 conversion.log
+                tail -100 conversion.log
               fi
             fi
             
             rm -f conversion.log 2>/dev/null || true
             
             echo ""
-          done < md_files.txt
+          done
           
           echo "========================================"
           echo "转换汇总: $converted_count 成功, $failed_count 失败"
@@ -525,9 +625,6 @@ jobs:
             echo "所有转换都失败了!"
             exit 1
           fi
-          
-          # 清理临时文件
-          rm -f md_files.txt
       
       - name: "Copy resource directories to output"
         run: |
@@ -542,6 +639,12 @@ jobs:
             if [ -d "$rel_dir/resource" ]; then
               echo "复制 $rel_dir/resource 到 $pdf_dir/"
               cp -r "$rel_dir/resource" "$pdf_dir/" 2>/dev/null || echo "无法复制 $rel_dir/resource"
+            fi
+            
+            # 如果原始目录下有picture目录，也复制到输出目录
+            if [ -d "$rel_dir/picture" ]; then
+              echo "复制 $rel_dir/picture 到 $pdf_dir/"
+              cp -r "$rel_dir/picture" "$pdf_dir/" 2>/dev/null || echo "无法复制 $rel_dir/picture"
             fi
           done
       
@@ -558,6 +661,17 @@ jobs:
             # 显示总大小
             total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; | awk '{sum+=$1} END {print int(sum/1024/1024)}')
             echo "PDF文件总大小: ${total_size_mb}MB"
+            
+            # 检查几个PDF的表格效果
+            echo "抽样检查PDF表格效果..."
+            find pdf_output -name "*.pdf" -type f | head -3 | while read pdf_file; do
+              echo "检查: $pdf_file"
+              if command -v pdftotext &> /dev/null; then
+                echo "表格内容预览:"
+                pdftotext "$pdf_file" - | grep -E "(\||表格|表)" | head -5 || true
+              fi
+              echo "---"
+            done
           fi
       
       - name: "Create release documentation"
@@ -575,8 +689,9 @@ jobs:
           echo "代码块带边框，自动换行" >> pdf_output/README.md
           echo "添加平铺式 'emakefun' 水印" >> pdf_output/README.md
           echo "包含resource目录中的程序文件" >> pdf_output/README.md
-          echo "优化：去除了页眉章节标题重复，修复了图片标签重复问题" >> pdf_output/README.md
-          echo "优化：改进了表格显示，支持复杂表格和表格内图片" >> pdf_output/README.md
+          echo "优化1：去除了页眉章节标题重复，修复了图片标签重复问题" >> pdf_output/README.md
+          echo "优化2：改进了表格处理，特别是包含图片的表格显示效果" >> pdf_output/README.md
+          echo "优化3：表格现在可以正确显示边框，图片在表格中自适应大小" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
@@ -606,7 +721,13 @@ jobs:
               resource_exists=" (含resource资源)"
             fi
             
-            echo "- [$file_name]($rel_path) ($file_size)$resource_exists" >> pdf_output/README.md
+            # 检查是否有picture目录
+            picture_exists=""
+            if [ -d "$pdf_dir/picture" ]; then
+              picture_exists=" (含picture图片)"
+            fi
+            
+            echo "- [$file_name]($rel_path) ($file_size)$resource_exists$picture_exists" >> pdf_output/README.md
           done
           
           echo "" >> pdf_output/README.md
@@ -614,8 +735,11 @@ jobs:
           
           # 统计有resource目录的PDF数量
           resource_dirs_count=$(find pdf_output -type d -name "resource" 2>/dev/null | wc -l)
+          picture_dirs_count=$(find pdf_output -type d -name "picture" 2>/dev/null | wc -l)
           
-          echo "总计: $PDF_COUNT 个 PDF 文件, 总大小约 ${total_size_mb}MB, ${resource_dirs_count} 个目录包含resource资源" >> pdf_output/README.md
+          echo "总计: $PDF_COUNT 个 PDF 文件, 总大小约 ${total_size_mb}MB" >> pdf_output/README.md
+          echo "- ${resource_dirs_count} 个目录包含resource资源" >> pdf_output/README.md
+          echo "- ${picture_dirs_count} 个目录包含picture图片" >> pdf_output/README.md
       
       - name: "Create zip archive for release"
         if: startsWith(github.ref, 'refs/tags/')
