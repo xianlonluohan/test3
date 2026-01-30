@@ -40,7 +40,8 @@ jobs:
             lmodern \
             tree \
             jq \
-            python3-pip
+            python3-pip \
+            poppler-utils  # 用于PDF检查
           
           pip3 install beautifulsoup4
       
@@ -286,7 +287,6 @@ jobs:
           \usepackage{array}
           \usepackage{multirow}
           \usepackage{colortbl}
-          \usepackage{ltablex}
           
           % 设置表格字体大小
           \usepackage{etoolbox}
@@ -305,14 +305,6 @@ jobs:
           
           % 表格换行处理
           \newcommand{\tabitem}{~~\llap{\textbullet}~~}
-          
-          % 防止表格过宽
-          \newcommand{\fitintable}[1]{%
-            \begin{tabularx}{\linewidth}{#1}%
-          }
-          \newcommand{\endfitintable}{%
-            \end{tabularx}%
-          }
           
           % 表格标题格式化
           \captionsetup[table]{skip=10pt}
@@ -495,6 +487,7 @@ jobs:
           IFS=$'\n'
           converted_count=0
           failed_count=0
+          failed_files=()
           
           for md_file in $MD_FILES; do
             [ -z "$md_file" ] && continue
@@ -517,10 +510,11 @@ jobs:
             
             echo "资源路径: $resource_paths"
             
-            # 预览处理后的markdown文件中的图片部分
-            echo "预览markdown中的图片引用:"
+            # 检查图片文件是否存在
+            echo "检查markdown中的图片引用..."
             if [ -f "$md_file" ]; then
-              grep -n '!\[.*\](.*)' "$md_file" | head -10 | while read line; do
+              echo "图片引用预览:"
+              grep -o '!\[.*\](.*)' "$md_file" | head -5 | while read line; do
                 echo "  $line"
               done || true
             fi
@@ -529,6 +523,9 @@ jobs:
             
             # 转换PDF - 使用更严格的设置确保图片和表格位置
             echo "开始转换PDF..."
+            
+            # 创建临时转换日志文件
+            conversion_log="conversion_${base_name}.log"
             
             pandoc "$md_file" \
               --resource-path="$resource_paths" \
@@ -556,7 +553,7 @@ jobs:
               -M placeins:true \
               -M floatplacement:"figure:H" \
               -M caption-justification=centered \
-              2>&1 | tee conversion.log
+              2>&1 | tee "$conversion_log"
               
             conversion_status=$?
             
@@ -571,30 +568,71 @@ jobs:
               pdf_size=$(du -h "pdf_output/$dir_name/$base_name.pdf" | cut -f1)
               echo "PDF文件大小: $pdf_size"
               
-              # 检查表格是否正确渲染
-              echo "检查PDF中的表格渲染..."
-              pdfimages "pdf_output/$dir_name/$base_name.pdf" /tmp/pdfimages_check 2>/dev/null || true
+              # 检查PDF是否有效
+              if pdfinfo "pdf_output/$dir_name/$base_name.pdf" >/dev/null 2>&1; then
+                echo "PDF文件有效"
+              else
+                echo "警告: PDF文件可能无效"
+              fi
+              
             else
               echo "✗ 转换失败: $md_file"
               failed_count=$((failed_count + 1))
+              failed_files+=("$md_file")
               
-              if [ -f "conversion.log" ]; then
-                echo "转换日志:"
-                tail -50 conversion.log
+              if [ -f "$conversion_log" ]; then
+                echo "转换日志 (最后50行):"
+                tail -50 "$conversion_log"
+                
+                # 检查是否有特定错误
+                if grep -q "endfitintable already defined" "$conversion_log"; then
+                  echo "检测到 LaTeX 命令冲突错误"
+                fi
+                
+                if grep -q "Could not fetch resource" "$conversion_log"; then
+                  echo "检测到图片资源缺失错误"
+                fi
               fi
             fi
             
-            rm -f conversion.log 2>/dev/null || true
+            # 清理转换日志
+            rm -f "$conversion_log" 2>/dev/null || true
             
             echo ""
           done
           
           echo "========================================"
           echo "转换汇总: $converted_count 成功, $failed_count 失败"
+          
+          if [ ${#failed_files[@]} -gt 0 ]; then
+            echo "失败的文件:"
+            for file in "${failed_files[@]}"; do
+              echo "  - $file"
+            done
+          fi
+          
           echo "========================================"
           
           if [ $converted_count -eq 0 ] && [ $failed_count -gt 0 ]; then
             echo "所有转换都失败了!"
+            
+            # 尝试一个简单的测试转换
+            echo "尝试简单测试转换..."
+            echo "# 测试文档" > test.md
+            echo "这是一个测试文档。" >> test.md
+            echo "- 项目1" >> test.md
+            echo "- 项目2" >> test.md
+            
+            pandoc test.md -o test.pdf --pdf-engine=xelatex 2>&1 | tee test.log
+            
+            if [ $? -eq 0 ]; then
+              echo "基本转换成功，问题可能在模板或文件内容"
+            else
+              echo "基本转换也失败，可能是环境问题"
+            fi
+            
+            rm -f test.md test.pdf test.log 2>/dev/null || true
+            
             exit 1
           fi
       
@@ -612,6 +650,12 @@ jobs:
               echo "复制 $rel_dir/resource 到 $pdf_dir/"
               cp -r "$rel_dir/resource" "$pdf_dir/" 2>/dev/null || echo "无法复制 $rel_dir/resource"
             fi
+            
+            # 复制picture目录
+            if [ -d "$rel_dir/picture" ]; then
+              echo "复制 $rel_dir/picture 到 $pdf_dir/"
+              cp -r "$rel_dir/picture" "$pdf_dir/" 2>/dev/null || echo "无法复制 $rel_dir/picture"
+            fi
           done
       
       - name: "Verify PDF files"
@@ -627,6 +671,13 @@ jobs:
             # 显示总大小
             total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; | awk '{sum+=$1} END {print int(sum/1024/1024)}')
             echo "PDF文件总大小: ${total_size_mb}MB"
+            
+            # 列出所有PDF文件
+            echo "生成的PDF文件列表:"
+            find pdf_output -name "*.pdf" -type f | sort | while read pdf_file; do
+              file_size=$(du -h "$pdf_file" | cut -f1)
+              echo "  - ${pdf_file#pdf_output/} ($file_size)"
+            done
           fi
       
       - name: "Create release documentation"
@@ -647,6 +698,7 @@ jobs:
           echo "优化：表格显示问题已修复，使用tabularx自动调整列宽" >> pdf_output/README.md
           echo "优化：添加了booktabs表格样式，支持表格内换行" >> pdf_output/README.md
           echo "优化：移除了页眉章节标题重复，修复了图片标签重复问题" >> pdf_output/README.md
+          echo "修复：解决了LaTeX命令冲突错误" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
