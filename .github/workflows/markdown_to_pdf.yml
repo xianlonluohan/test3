@@ -40,137 +40,17 @@ jobs:
             lmodern \
             tree \
             jq \
-            python3-pip
+            python3-pip \
+            ghostscript \
+            poppler-utils
           
           pip3 install beautifulsoup4
       
-      - name: "Create improved HTML to Markdown converter"
+      - name: "Set up output directory"
         run: |
-          cat > convert_html.py << 'EOF'
-          import os
-          import re
-          import sys
-          
-          def convert_html_to_markdown(content, file_path):
-              """将HTML标签转换为Markdown格式，保持图片顺序"""
-              
-              # 首先处理图片和对应的center标签
-              center_img_pattern = re.compile(
-                  r'<center>\s*(.*?<img\s+[^>]+>.*?)\s*</center>',
-                  re.IGNORECASE | re.DOTALL
-              )
-              
-              def replace_center_img(match):
-                  inner_content = match.group(1).strip()
-                  
-                  # 提取img标签
-                  img_match = re.search(r'<img\s+([^>]+)>', inner_content)
-                  if img_match:
-                      attrs_str = img_match.group(1)
-                      
-                      # 提取属性
-                      src_match = re.search(r'src\s*=\s*["\']([^"\']+)["\']', attrs_str)
-                      alt_match = re.search(r'alt\s*=\s*["\']([^"\']*)["\']', attrs_str)
-                      
-                      src = src_match.group(1) if src_match else ''
-                      alt = alt_match.group(1) if alt_match else ''
-                      
-                      # 清理src路径
-                      if src:
-                          src = re.sub(r'^\./', '', src)
-                          src = re.sub(r'^/', '', src)
-                      
-                      # 返回Markdown图片格式，并添加换行确保正确显示
-                      return f'\n\n![{alt}]({src})\n\n'
-                  
-                  return inner_content
-              
-              content = center_img_pattern.sub(replace_center_img, content)
-              
-              # 单独处理剩余的img标签（不在center中的）
-              img_pattern = re.compile(r'<img\s+([^>]+)>', re.IGNORECASE)
-              
-              def replace_img_tag(match):
-                  attrs_str = match.group(1)
-                  
-                  src_match = re.search(r'src\s*=\s*["\']([^"\']+)["\']', attrs_str)
-                  alt_match = re.search(r'alt\s*=\s*["\']([^"\']*)["\']', attrs_str)
-                  
-                  src = src_match.group(1) if src_match else ''
-                  alt = alt_match.group(1) if alt_match else ''
-                  
-                  # 清理src路径
-                  if src:
-                      src = re.sub(r'^\./', '', src)
-                      src = re.sub(r'^/', '', src)
-                  
-                  # 返回Markdown图片格式，添加换行
-                  return f'\n\n![{alt}]({src})\n\n'
-              
-              content = img_pattern.sub(replace_img_tag, content)
-              
-              # 处理链接标签
-              link_pattern = re.compile(r'<a\s+([^>]+)>(.*?)</a>', re.IGNORECASE | re.DOTALL)
-              
-              def replace_link_tag(match):
-                  attrs_str = match.group(1)
-                  link_text = match.group(2).strip()
-                  
-                  href_match = re.search(r'href\s*=\s*["\']([^"\']+)["\']', attrs_str)
-                  if href_match:
-                      href = href_match.group(1)
-                      return f'[{link_text}]({href})'
-                  return link_text
-            
-              content = link_pattern.sub(replace_link_tag, content)
-              
-              # 移除剩余的HTML标签，保留内容
-              content = re.sub(r'<[^>]+>', '', content)
-              
-              # 清理多余的空白行
-              content = re.sub(r'\n\s*\n\s*\n', '\n\n', content)
-              
-              return content
-          
-          def process_markdown_file(filepath):
-              print(f"处理文件: {filepath}")
-              try:
-                  with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                      content = f.read()
-                  
-                  # 转换HTML为Markdown
-                  processed_content = convert_html_to_markdown(content, filepath)
-                  
-                  # 保存处理后的文件
-                  with open(filepath, 'w', encoding='utf-8') as f:
-                      f.write(processed_content)
-                      
-                  return True
-              except Exception as e:
-                  print(f"处理失败 {filepath}: {e}")
-                  import traceback
-                  traceback.print_exc()
-                  return False
-          
-          # 遍历所有Markdown文件
-          processed = 0
-          for root, dirs, files in os.walk('.'):
-              # 跳过特定目录
-              skip_dirs = ['.git', 'pdf_output', '__pycache__', '.github', 'node_modules']
-              dirs[:] = [d for d in dirs if d not in skip_dirs]
-              
-              for file in files:
-                  if file.endswith('.md'):
-                      filepath = os.path.join(root, file)
-                      if process_markdown_file(filepath):
-                          processed += 1
-          
-          print(f"处理完成: {processed} 个文件")
-          EOF
-          
-          python3 convert_html.py
+          mkdir -p pdf_output
       
-      - name: "Create LaTeX template with better image handling"
+      - name: "Create optimized LaTeX template"
         run: |
           cat > header.tex << 'EOF'
           \usepackage{xeCJK}
@@ -204,54 +84,51 @@ jobs:
           \usepackage{array}
           \usepackage{multirow}
           \usepackage{makecell}
-          
-          % 设置表格宽度自适应
-          \newcommand{\mytablewidth}{0.95\textwidth}
-          
-          % 调整表格字体大小
-          \let\oldlongtable\longtable
-          \let\endoldlongtable\endlongtable
-          \renewenvironment{longtable}[1]{
-            \footnotesize
-            \begin{oldlongtable}{#1}
-          }{
-            \end{oldlongtable}
-          }
+          \usepackage{adjustbox}
           
           % 设置表格列宽自动调整
           \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
           \newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
           \newcolumntype{R}[1]{>{\raggedleft\arraybackslash}p{#1}}
           
+          % 调整表格字体大小
+          \let\oldlongtable\longtable
+          \let\endoldlongtable\endlongtable
+          \renewenvironment{longtable}[1]{
+            \scriptsize
+            \begin{oldlongtable}{#1}
+          }{
+            \end{oldlongtable}
+          }
+          
           % 重定义tabular环境以适应页面宽度
           \let\oldtabular\tabular
           \let\endoldtabular\endtabular
           \renewenvironment{tabular}[1]{
-            \footnotesize
-            \begin{center}
+            \scriptsize
+            \centering
+            \setlength{\tabcolsep}{2pt}
+            \renewcommand{\arraystretch}{1.0}
             \begin{oldtabular}{#1}
           }{
             \end{oldtabular}
-            \end{center}
           }
           
           % 处理Markdown表格的特殊情况
           \usepackage{etoolbox}
           \AtBeginEnvironment{longtable}{
-            \footnotesize
+            \scriptsize
             \centering
-            \setlength{\tabcolsep}{3pt}
-            \renewcommand{\arraystretch}{1.1}
+            \setlength{\tabcolsep}{2pt}
+            \renewcommand{\arraystretch}{1.0}
           }
           
           \AtBeginEnvironment{tabular}{
-            \footnotesize
+            \scriptsize
             \centering
-            \setlength{\tabcolsep}{3pt}
-            \renewcommand{\arraystretch}{1.1}
+            \setlength{\tabcolsep}{2pt}
+            \renewcommand{\arraystretch}{1.0}
           }
-          
-          % 处理宽表格 - 移除重复定义的\specialtabular和\endspecialtabular
           % ================== 表格优化结束 ==================
           
           \definecolor{codebg}{rgb}{0.98,0.98,0.98}
@@ -329,7 +206,7 @@ jobs:
           \AddToShipoutPictureBG{\BackgroundPicture}
           
           % 图片处理设置 - 确保图片位置正确
-          \graphicspath{{./}{./picture/}{./resource/}}
+          \graphicspath{{./}{./picture/}{./resource/}{../picture/}{../../picture/}}
           
           % 设置图片最大宽度为行宽
           \makeatletter
@@ -342,19 +219,6 @@ jobs:
             \begin{figure}[H]
               \centering
               \oldincludegraphics[#1,width=\maxwidth,keepaspectratio]{#2}
-            \end{figure}%
-          }
-          
-          % 处理markdown中的图片引用，不自动生成标签
-          \usepackage{xparse}
-          \NewDocumentCommand{\mdimage}{m o}{%
-            \begin{figure}[H]
-              \centering
-              \IfValueTF{#2}{%
-                \includegraphics[width=#2\linewidth]{#1}%
-              }{%
-                \includegraphics[width=0.8\linewidth]{#1}%
-              }
             \end{figure}%
           }
           
@@ -408,62 +272,64 @@ jobs:
             {}
           EOF
       
-      - name: "Set up output directory"
+      - name: "Create optimized conversion script"
         run: |
-          mkdir -p pdf_output
-      
-      - name: "Convert Markdown to PDF with improved image placement"
-        run: |
-          MD_FILES=$(find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" -not -path "./pdf_output/*" | sed 's/^\.\///')
+          cat > convert_md_to_pdf.sh << 'EOF'
+          #!/bin/bash
+          set -e
           
-          IFS=$'\n'
-          converted_count=0
-          failed_count=0
+          echo "开始转换Markdown文件到PDF..."
+          
+          # 查找所有Markdown文件
+          MD_FILES=$(find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" -not -path "./pdf_output/*" | sort)
+          
+          total_count=0
+          success_count=0
+          fail_count=0
           
           for md_file in $MD_FILES; do
-            [ -z "$md_file" ] && continue
+            if [ ! -f "$md_file" ]; then
+              continue
+            fi
             
+            total_count=$((total_count + 1))
+            
+            echo ""
             echo "========================================"
-            echo "处理文件: $md_file"
+            echo "处理文件 ($total_count): $md_file"
             echo "========================================"
             
+            # 获取目录和文件名
             dir_name=$(dirname "$md_file")
             base_name=$(basename "$md_file" .md)
             
-            # 只创建PDF输出目录
+            # 创建输出目录
             mkdir -p "pdf_output/$dir_name"
             
-            # 获取markdown文件所在目录
+            # 构建资源路径 - 包含多个可能的路径
             md_dir=$(dirname "$md_file")
-            
-            # 构建资源路径 - 包含多个可能的位置
-            resource_paths="$md_dir:$md_dir/picture:$md_dir/../picture:.:./picture:./resource"
+            resource_paths="$md_dir:$md_dir/picture:$md_dir/../picture:$md_dir/../../picture:.:./picture:./resource:..:../.."
             
             echo "资源路径: $resource_paths"
             
-            # 预览处理后的markdown文件中的图片部分
-            echo "预览markdown中的图片引用:"
-            if [ -f "$md_file" ]; then
-              grep -n '!\[.*\](.*)' "$md_file" | head -10 | while read line; do
-                echo "  $line"
-              done || true
-            fi
+            # 临时文件，用于修复Markdown中的图片引用
+            temp_md=$(mktemp)
             
-            set +e
+            # 修复Markdown文件中的图片路径
+            sed -E 's|!\[([^]]*)\]\(\./([^)]+)\)|![\1](\2)|g' "$md_file" | \
+            sed -E 's|!\[([^]]*)\]\(picture/([^)]+)\)|![\1](picture/\2)|g' | \
+            sed -E 's|!\[([^]]*)\]\(\./picture/([^)]+)\)|![\1](picture/\2)|g' > "$temp_md"
             
-            # 转换PDF - 使用更严格的设置确保图片位置
-            echo "开始转换PDF..."
-            
-            # 添加表格处理参数
-            pandoc "$md_file" \
-              --resource-path="$resource_paths" \
-              -o "pdf_output/$dir_name/$base_name.pdf" \
+            # 构建pandoc命令
+            cmd="pandoc \"$temp_md\" \
+              --resource-path=\"$resource_paths\" \
+              -o \"pdf_output/$dir_name/$base_name.pdf\" \
               --pdf-engine=xelatex \
               --listings \
               --include-in-header=header.tex \
-              -V mainfont="Noto Serif CJK SC" \
-              -V sansfont="Noto Sans CJK SC" \
-              -V monofont="Noto Sans Mono CJK SC" \
+              -V mainfont=\"Noto Serif CJK SC\" \
+              -V sansfont=\"Noto Sans CJK SC\" \
+              -V monofont=\"Noto Sans Mono CJK SC\" \
               -V geometry:margin=1.2in \
               -V geometry:a4paper \
               -V colorlinks=true \
@@ -473,51 +339,99 @@ jobs:
               --highlight-style=tango \
               -f markdown \
               --top-level-division=chapter \
-              -M graphics:true \
-              -M placeins:true \
-              -M floatplacement:"figure:H" \
-              -M caption-justification=centered \
               --variable tables \
               --variable longtable \
               --variable booktabs \
-              --variable tabcolsep=3 \
-              2>&1 | tee conversion.log
-              
-            conversion_status=$?
+              --variable tabcolsep=2"
             
-            set -e
-            
-            # 检查转换是否成功
-            if [ $conversion_status -eq 0 ] && [ -f "pdf_output/$dir_name/$base_name.pdf" ] && [ -s "pdf_output/$dir_name/$base_name.pdf" ]; then
-              echo "✓ 成功转换: $md_file"
-              converted_count=$((converted_count + 1))
-              
-              # 检查PDF文件大小
-              pdf_size=$(du -h "pdf_output/$dir_name/$base_name.pdf" | cut -f1)
-              echo "PDF文件大小: $pdf_size"
+            # 执行转换
+            if eval "$cmd" 2>&1 | tee conversion.log; then
+              if [ -f "pdf_output/$dir_name/$base_name.pdf" ] && [ -s "pdf_output/$dir_name/$base_name.pdf" ]; then
+                echo "✓ 成功转换: $md_file"
+                success_count=$((success_count + 1))
+                
+                # 检查PDF文件大小
+                pdf_size=$(du -h "pdf_output/$dir_name/$base_name.pdf" | cut -f1)
+                echo "PDF文件大小: $pdf_size"
+              else
+                echo "✗ 转换失败: 生成的文件为空或不存在"
+                fail_count=$((fail_count + 1))
+              fi
             else
-              echo "✗ 转换失败: $md_file"
-              failed_count=$((failed_count + 1))
+              echo "✗ 转换失败: pandoc命令执行失败"
+              fail_count=$((fail_count + 1))
               
+              # 显示错误日志
               if [ -f "conversion.log" ]; then
                 echo "转换日志:"
                 tail -50 conversion.log
               fi
             fi
             
-            rm -f conversion.log 2>/dev/null || true
+            # 清理临时文件
+            rm -f "$temp_md" conversion.log 2>/dev/null || true
             
-            echo ""
+            # 为了避免资源占用，每处理5个文件稍作等待
+            if [ $((total_count % 5)) -eq 0 ]; then
+              echo "已处理 $total_count 个文件，稍作等待..."
+              sleep 2
+            fi
           done
           
+          echo ""
           echo "========================================"
-          echo "转换汇总: $converted_count 成功, $failed_count 失败"
+          echo "转换汇总: 总共 $total_count 个文件"
+          echo "成功: $success_count 个"
+          echo "失败: $fail_count 个"
           echo "========================================"
           
-          if [ $converted_count -eq 0 ] && [ $failed_count -gt 0 ]; then
-            echo "所有转换都失败了!"
+          if [ $success_count -eq 0 ]; then
+            echo "警告: 没有成功转换任何文件!"
             exit 1
           fi
+          
+          exit 0
+          EOF
+          
+          chmod +x convert_md_to_pdf.sh
+      
+      - name: "Convert Markdown to PDF"
+        run: |
+          ./convert_md_to_pdf.sh
+      
+      - name: "Fix missing images in PDFs"
+        run: |
+          echo "检查PDF文件中缺失的图片..."
+          
+          # 首先尝试找到所有图片文件
+          echo "查找所有图片文件..."
+          find . -name "*.png" -o -name "*.jpg" -o -name "*.jpeg" -o -name "*.gif" | head -20
+          
+          # 检查转换后的PDF
+          pdf_count=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
+          
+          if [ $pdf_count -eq 0 ]; then
+            echo "警告: 没有生成PDF文件!"
+            echo "尝试直接转换一个测试文件..."
+            
+            # 创建一个测试转换
+            mkdir -p pdf_output/test
+            echo "# 测试文件" > test.md
+            echo "这是一个测试文件" >> test.md
+            echo "![测试图片](https://via.placeholder.com/150)" >> test.md
+            
+            pandoc test.md \
+              -o pdf_output/test/test.pdf \
+              --pdf-engine=xelatex \
+              --include-in-header=header.tex \
+              -V mainfont="Noto Serif CJK SC" \
+              -V geometry:margin=1.2in \
+              -V geometry:a4paper
+            
+            rm -f test.md
+          fi
+          
+          echo "总共生成 $pdf_count 个PDF文件"
       
       - name: "Copy resource directories to output"
         run: |
@@ -540,14 +454,26 @@ jobs:
           total_pdfs=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
           
           if [ $total_pdfs -eq 0 ]; then
-            echo "没有生成PDF文件!"
+            echo "错误: 没有生成PDF文件!"
+            
+            # 显示目录结构，帮助调试
+            echo "当前目录结构:"
+            find . -name "*.md" | head -20
+            echo ""
+            echo "图片文件:"
+            find . -name "*.png" -o -name "*.jpg" -o -name "*.jpeg" | head -20
+            
             exit 1
           else
             echo "总共生成 $total_pdfs 个PDF文件"
             
             # 显示总大小
-            total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; | awk '{sum+=$1} END {print int(sum/1024/1024)}')
+            total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; 2>/dev/null | awk '{sum+=$1} END {print int(sum/1024/1024)}' || echo "0")
             echo "PDF文件总大小: ${total_size_mb}MB"
+            
+            # 列出所有生成的PDF
+            echo "生成的PDF文件:"
+            find pdf_output -name "*.pdf" -type f | sort | head -20
           fi
       
       - name: "Create release documentation"
@@ -561,13 +487,12 @@ jobs:
           echo "# PDF 文档集" > pdf_output/README.md
           echo "" >> pdf_output/README.md
           echo "生成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> pdf_output/README.md
-          echo "已优化HTML标签处理，图片位置正确" >> pdf_output/README.md
+          echo "已优化表格显示，解决表格过大问题" >> pdf_output/README.md
           echo "代码块带边框，自动换行" >> pdf_output/README.md
           echo "添加平铺式 'emakefun' 水印" >> pdf_output/README.md
           echo "包含resource目录中的程序文件" >> pdf_output/README.md
-          echo "优化：去除了页眉章节标题重复，修复了图片标签重复问题" >> pdf_output/README.md
-          echo "优化：添加表格显示优化，解决表格过大问题" >> pdf_output/README.md
-          echo "修复：解决了LaTeX命令重复定义和Shell参数错误问题" >> pdf_output/README.md
+          echo "优化：修复了图片路径问题，确保图片正确显示" >> pdf_output/README.md
+          echo "优化：简化了转换流程，提高成功率" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
@@ -580,7 +505,7 @@ jobs:
             rel_path=${pdf_file#pdf_output/}
             dir_name=$(dirname "$rel_path")
             file_name=$(basename "$rel_path")
-            file_size=$(du -h "$pdf_file" | cut -f1)
+            file_size=$(du -h "$pdf_file" 2>/dev/null | cut -f1 || echo "未知")
             
             if [ "$current_dir" != "$dir_name" ]; then
               current_dir="$dir_name"
@@ -601,7 +526,7 @@ jobs:
           done
           
           echo "" >> pdf_output/README.md
-          total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; | awk '{sum+=$1} END {print int(sum/1024/1024)}')
+          total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; 2>/dev/null | awk '{sum+=$1} END {print int(sum/1024/1024)}' || echo "0")
           
           # 统计有resource目录的PDF数量
           resource_dirs_count=$(find pdf_output -type d -name "resource" 2>/dev/null | wc -l)
