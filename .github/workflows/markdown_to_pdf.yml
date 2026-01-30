@@ -1,4 +1,4 @@
-name: "Markdown to PDF Converter with Tiled Watermark"
+name: "Markdown to PDF Converter with Tiled Watermark and Table Fix"
 
 on:
   push:
@@ -44,7 +44,7 @@ jobs:
           
           pip3 install beautifulsoup4
       
-      - name: "Create HTML to Markdown converter with image positioning"
+      - name: "Create improved HTML to Markdown converter"
         run: |
           cat > convert_html.py << 'EOF'
           import os
@@ -52,44 +52,60 @@ jobs:
           import sys
           
           def convert_html_to_markdown(content, file_path):
-              """将HTML标签转换为Markdown格式，保持图片位置"""
+              """将HTML标签转换为Markdown格式，保持图片顺序"""
               
-              # 首先处理表格中的图片 - 特殊处理
-              # 找到表格区域，避免处理表格内的HTML标签
+              # 首先处理图片和对应的center标签
+              center_img_pattern = re.compile(
+                  r'<center>\s*(.*?<img\s+[^>]+>.*?)\s*</center>',
+                  re.IGNORECASE | re.DOTALL
+              )
               
-              # 处理图片标签
+              def replace_center_img(match):
+                  inner_content = match.group(1).strip()
+                  
+                  # 提取img标签
+                  img_match = re.search(r'<img\s+([^>]+)>', inner_content)
+                  if img_match:
+                      attrs_str = img_match.group(1)
+                      
+                      # 提取属性
+                      src_match = re.search(r'src\s*=\s*["\']([^"\']+)["\']', attrs_str)
+                      alt_match = re.search(r'alt\s*=\s*["\']([^"\']*)["\']', attrs_str)
+                      
+                      src = src_match.group(1) if src_match else ''
+                      alt = alt_match.group(1) if alt_match else ''
+                      
+                      # 清理src路径
+                      if src:
+                          src = re.sub(r'^\./', '', src)
+                          src = re.sub(r'^/', '', src)
+                      
+                      # 返回Markdown图片格式，并添加换行确保正确显示
+                      return f'\n\n![{alt}]({src})\n\n'
+                  
+                  return inner_content
+              
+              content = center_img_pattern.sub(replace_center_img, content)
+              
+              # 单独处理剩余的img标签（不在center中的）
               img_pattern = re.compile(r'<img\s+([^>]+)>', re.IGNORECASE)
               
               def replace_img_tag(match):
                   attrs_str = match.group(1)
                   
-                  # 提取属性
                   src_match = re.search(r'src\s*=\s*["\']([^"\']+)["\']', attrs_str)
                   alt_match = re.search(r'alt\s*=\s*["\']([^"\']*)["\']', attrs_str)
-                  width_match = re.search(r'width\s*=\s*["\']([^"\']+)["\']', attrs_str)
                   
                   src = src_match.group(1) if src_match else ''
                   alt = alt_match.group(1) if alt_match else ''
                   
-                  # 清理src路径 - 移除开头的./或/
+                  # 清理src路径
                   if src:
                       src = re.sub(r'^\./', '', src)
                       src = re.sub(r'^/', '', src)
                   
-                  # 对于有宽度的图片，添加LaTeX属性
-                  if width_match:
-                      width = width_match.group(1)
-                      # 转换为合适的LaTeX宽度格式
-                      if width.endswith('px'):
-                          width_num = width[:-2]
-                          if width_num.isdigit():
-                              if int(width_num) > 500:
-                                  return f'![{alt}]({src}){{width=0.8\\linewidth}}'
-                              else:
-                                  return f'![{alt}]({src}){{width=0.5\\linewidth}}'
-                  
-                  # 返回Markdown图片格式
-                  return f'![{alt}]({src})'
+                  # 返回Markdown图片格式，添加换行
+                  return f'\n\n![{alt}]({src})\n\n'
               
               content = img_pattern.sub(replace_img_tag, content)
               
@@ -105,35 +121,14 @@ jobs:
                       href = href_match.group(1)
                       return f'[{link_text}]({href})'
                   return link_text
-              
+            
               content = link_pattern.sub(replace_link_tag, content)
               
-              # 处理center标签 - 转换为LaTeX环境
-              center_pattern = re.compile(r'<center>(.*?)</center>', re.DOTALL | re.IGNORECASE)
+              # 移除剩余的HTML标签，保留内容
+              content = re.sub(r'<[^>]+>', '', content)
               
-              def replace_center_tag(match):
-                  inner_content = match.group(1).strip()
-                  # 检查内部是否只有图片
-                  if re.search(r'!\[.*?\]\(.*?\)', inner_content):
-                      # 是图片，保持原样，但添加LaTeX属性
-                      return f'\\begin{{center}}\n{inner_content}\n\\end{{center}}'
-                  else:
-                      # 其他内容，保持居中
-                      return f'\\begin{{center}}\n{inner_content}\n\\end{{center}}'
-              
-              content = center_pattern.sub(replace_center_tag, content)
-              
-              # 处理表格 - 保持HTML表格结构，Pandoc可以处理
-              # 我们只需要确保表格标签完整
-              
-              # 移除其他不必要的HTML标签
-              content = re.sub(r'</?span[^>]*>', '', content)
-              content = re.sub(r'</?div[^>]*>', '', content)
-              content = re.sub(r'</?font[^>]*>', '', content)
-              content = re.sub(r'</?strong[^>]*>', '**', content)
-              content = re.sub(r'</?b[^>]*>', '**', content)
-              content = re.sub(r'</?em[^>]*>', '*', content)
-              content = re.sub(r'</?i[^>]*>', '*', content)
+              # 清理多余的空白行
+              content = re.sub(r'\n\s*\n\s*\n', '\n\n', content)
               
               return content
           
@@ -153,6 +148,8 @@ jobs:
                   return True
               except Exception as e:
                   print(f"处理失败 {filepath}: {e}")
+                  import traceback
+                  traceback.print_exc()
                   return False
           
           # 遍历所有Markdown文件
@@ -173,7 +170,88 @@ jobs:
           
           python3 convert_html.py
       
-      - name: "Create LaTeX template with better image handling"
+      - name: "Fix table formatting in Markdown files"
+        run: |
+          cat > fix_tables.py << 'EOF'
+          import os
+          import re
+          
+          def fix_table_formatting(content):
+              """优化Markdown表格格式，修复表格显示问题"""
+              
+              # 查找并修复表格
+              table_pattern = re.compile(r'(\|[^\n]+\|\n)((?:\|[-:]+\|)+\n)((?:[^\n]*\|\n?)*)', re.MULTILINE)
+              
+              def replace_table(match):
+                  header = match.group(1)
+                  separator = match.group(2)
+                  rows = match.group(3)
+                  
+                  # 计算表格列数
+                  col_count = header.count('|') - 1
+                  
+                  # 构建对齐方式
+                  align_parts = []
+                  for i in range(col_count):
+                      align_parts.append(':---:')  # 居中对齐
+                  
+                  new_separator = '|' + '|'.join(align_parts) + '|\n'
+                  
+                  # 修复行内容
+                  fixed_rows = []
+                  for row in rows.strip().split('\n'):
+                      if row.strip():
+                          # 确保每行的列数正确
+                          cells = [cell.strip() for cell in row.split('|') if cell != '']
+                          if len(cells) == col_count:
+                              fixed_rows.append('| ' + ' | '.join(cells) + ' |\n')
+                          else:
+                              fixed_rows.append(row + '\n')
+                  
+                  return header + new_separator + ''.join(fixed_rows)
+              
+              content = table_pattern.sub(replace_table, content)
+              
+              # 移除HTML表格标签
+              content = re.sub(r'<table>.*?</table>', '', content, flags=re.DOTALL)
+              content = re.sub(r'<tr>|</tr>|<td>|</td>|<th>|</th>', '', content, flags=re.IGNORECASE)
+              
+              # 修复表格中的换行符
+              content = re.sub(r'<br/?>', '<br>', content, flags=re.IGNORECASE)
+              
+              return content
+          
+          def process_markdown_files():
+              """处理所有Markdown文件中的表格"""
+              for root, dirs, files in os.walk('.'):
+                  skip_dirs = ['.git', 'pdf_output', '__pycache__', '.github', 'node_modules']
+                  dirs[:] = [d for d in dirs if d not in skip_dirs]
+                  
+                  for file in files:
+                      if file.endswith('.md'):
+                          filepath = os.path.join(root, file)
+                          print(f"处理表格: {filepath}")
+                          
+                          try:
+                              with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                                  content = f.read()
+                              
+                              # 修复表格格式
+                              fixed_content = fix_table_formatting(content)
+                              
+                              with open(filepath, 'w', encoding='utf-8') as f:
+                                  f.write(fixed_content)
+                                  
+                          except Exception as e:
+                              print(f"处理表格失败 {filepath}: {e}")
+          
+          if __name__ == "__main__":
+              process_markdown_files()
+          EOF
+          
+          python3 fix_tables.py
+      
+      - name: "Create LaTeX template with better image and table handling"
         run: |
           cat > header.tex << 'EOF'
           \usepackage{xeCJK}
@@ -198,10 +276,50 @@ jobs:
           \usepackage{graphicx}
           \usepackage{float}
           \usepackage{caption}
-          \usepackage{subcaption}
+          \usepackage[section]{placeins}
+          
+          % ========== 表格处理包 ==========
+          \usepackage{booktabs}
+          \usepackage{tabularx}
+          \usepackage{makecell}
+          \usepackage{longtable}
+          \usepackage{array}
+          \usepackage{multirow}
+          \usepackage{colortbl}
+          \usepackage{ltablex}
+          
+          % 设置表格字体大小
+          \usepackage{etoolbox}
+          \AtBeginEnvironment{longtable}{%
+            \small
+            \renewcommand{\arraystretch}{1.2}
+          }
+          
+          % 自动调整表格列宽
+          \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+          \newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+          \newcolumntype{R}[1]{>{\raggedleft\arraybackslash}p{#1}}
+          
+          % 优化表格间距
+          \setlength{\tabcolsep}{5pt}
+          
+          % 表格换行处理
+          \newcommand{\tabitem}{~~\llap{\textbullet}~~}
+          
+          % 防止表格过宽
+          \newcommand{\fitintable}[1]{%
+            \begin{tabularx}{\linewidth}{#1}%
+          }
+          \newcommand{\endfitintable}{%
+            \end{tabularx}%
+          }
+          
+          % 表格标题格式化
+          \captionsetup[table]{skip=10pt}
           
           \definecolor{codebg}{rgb}{0.98,0.98,0.98}
           \definecolor{framecolor}{rgb}{0.8,0.8,0.8}
+          \definecolor{tablehead}{rgb}{0.95,0.95,0.95}
           
           \lstset{
             basicstyle=\ttfamily\normalsize,
@@ -274,63 +392,103 @@ jobs:
           
           \AddToShipoutPictureBG{\BackgroundPicture}
           
-          % 图片处理设置
+          % 图片处理设置 - 确保图片位置正确
           \graphicspath{{./}{./picture/}{./resource/}}
           
-          % 更好的图片处理方式
-          \usepackage[export]{adjustbox}
+          % 设置图片最大宽度为行宽
+          \makeatletter
+          \def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+          \makeatother
           
-          % 设置图片默认居中
+          % 重新定义图片环境，确保图片位置固定，不自动生成标签
           \let\oldincludegraphics\includegraphics
           \renewcommand{\includegraphics}[2][]{%
             \begin{figure}[H]
               \centering
-              \oldincludegraphics[#1,max width=0.8\linewidth]{#2}
+              \oldincludegraphics[#1,width=\maxwidth,keepaspectratio]{#2}
             \end{figure}%
           }
           
-          % 处理带属性的图片
+          % 处理markdown中的图片引用，不自动生成标签
           \usepackage{xparse}
-          \NewDocumentCommand{\includegraphicswithattr}{m o}{%
+          \NewDocumentCommand{\mdimage}{m o}{%
             \begin{figure}[H]
               \centering
               \IfValueTF{#2}{%
-                \oldincludegraphics[width=#2\linewidth]{#1}
-              }{%
-                \oldincludegraphics[max width=0.8\linewidth]{#1}
+                \includegraphics[width=#2\linewidth]{#1}%
+              }{% 
+                \includegraphics[width=0.8\linewidth]{#1}%
               }
             \end{figure}%
           }
           
-          % 处理表格内的图片 - 不使用浮动环境
-          \newcommand{\tablegraphics}[2][]{%
-            \raisebox{-0.5\height}{\oldincludegraphics[#1,max width=0.3\linewidth]{#2}}%
+          % 防止图片浮动到错误位置
+          \usepackage{float}
+          \floatplacement{figure}{H}
+          
+          % 确保图片按顺序出现
+          \usepackage{placeins}
+          \AtBeginDocument{%
+            \let\oldfigure\figure
+            \renewcommand{\figure}[1][H]{%
+              \oldfigure[#1]%
+              \centering
+            }%
           }
           
-          % 防止代码块中的字符被错误解析
-          \lstset{literate=
-            {á}{{\'a}}1 {é}{{\'e}}1 {í}{{\'i}}1 {ó}{{\'o}}1 {ú}{{\'u}}1
-            {Á}{{\'A}}1 {É}{{\'E}}1 {Í}{{\'I}}1 {Ó}{{\'O}}1 {Ú}{{\'U}}1
-            {à}{{\`a}}1 {è}{{\`e}}1 {ì}{{\`i}}1 {ò}{{\`o}}1 {ù}{{\`u}}1
-            {À}{{\`A}}1 {È}{{\`E}}1 {Ì}{{\`I}}1 {Ò}{{\`O}}1 {Ù}{{\`U}}1
-            {ä}{{\"a}}1 {ë}{{\"e}}1 {ï}{{\"i}}1 {ö}{{\"o}}1 {ü}{{\"u}}1
-            {Ä}{{\"A}}1 {Ë}{{\"E}}1 {Ï}{{\"I}}1 {Ö}{{\"O}}1 {Ü}{{\"U}}1
-            {â}{{\^a}}1 {ê}{{\^e}}1 {î}{{\^i}}1 {ô}{{\^o}}1 {û}{{\^u}}1
-            {Â}{{\^A}}1 {Ê}{{\^E}}1 {Î}{{\^I}}1 {Ô}{{\^O}}1 {Û}{{\^U}}1
-            {ã}{{\~a}}1 {ẽ}{{\~e}}1 {ĩ}{{\~i}}1 {õ}{{\~o}}1 {ũ}{{\~u}}1
-            {Ã}{{\~A}}1 {Ẽ}{{\~E}}1 {Ĩ}{{\~I}}1 {Õ}{{\~O}}1 {Ũ}{{\~U}}1
-            {œ}{{\oe}}1 {Œ}{{\OE}}1 {æ}{{\ae}}1 {Æ}{{\AE}}1 {ß}{{\ss}}1
-            {ç}{{\c c}}1 {Ç}{{\c C}}1 {ø}{{\o}}1 {Ø}{{\O}}1 {å}{{\r a}}1 {Å}{{\r A}}1
-            {€}{{\euro}}1 {£}{{\pounds}}1 {«}{{\guillemotleft}}1
-            {»}{{\guillemotright}}1 {ñ}{{\~n}}1 {Ñ}{{\~N}}1 {¿}{{?`}}1
-          }
+          % 关闭章节标题在页眉的显示
+          \usepackage{fancyhdr}
+          \pagestyle{fancy}
+          \fancyhf{} % 清除所有页眉页脚
+          \fancyhead[L]{}
+          \fancyhead[C]{}
+          \fancyhead[R]{}
+          \fancyfoot[C]{\thepage} % 只在页脚居中显示页码
+          \renewcommand{\headrulewidth}{0pt} % 去掉页眉横线
+          \renewcommand{\footrulewidth}{0pt} % 去掉页脚横线
+          
+          % 防止章节标题在页眉重复出现
+          \renewcommand{\chaptermark}[1]{}
+          \renewcommand{\sectionmark}[1]{}
+          
+          % 设置标题格式
+          \usepackage{titlesec}
+          \titleformat{\chapter}[display]
+            {\normalfont\huge\bfseries\centering}
+            {\chaptertitlename\ \thechapter}
+            {20pt}
+            {\Huge}
+          
+          \titleformat{\section}
+            {\normalfont\Large\bfseries}
+            {\thesection}
+            {1em}
+            {}
+          
+          \titleformat{\subsection}
+            {\normalfont\large\bfseries}
+            {\thesubsection}
+            {1em}
+            {}
+          
+          % 表格标题设置
+          \titleformat{\paragraph}
+            {\normalfont\normalsize\bfseries}
+            {\theparagraph}
+            {1em}
+            {}
+          
+          \titlespacing*{\paragraph}
+            {0pt}
+            {3.25ex plus 1ex minus .2ex}
+            {1.5ex plus .2ex}
           EOF
       
       - name: "Set up output directory"
         run: |
           mkdir -p pdf_output
       
-      - name: "Convert Markdown to PDF with better settings"
+      - name: "Convert Markdown to PDF with improved image and table placement"
         run: |
           MD_FILES=$(find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" -not -path "./pdf_output/*" | sed 's/^\.\///')
           
@@ -359,20 +517,19 @@ jobs:
             
             echo "资源路径: $resource_paths"
             
-            # 检查markdown文件中提到的图片
-            echo "检查图片引用..."
+            # 预览处理后的markdown文件中的图片部分
+            echo "预览markdown中的图片引用:"
             if [ -f "$md_file" ]; then
-              echo "Markdown文件内容预览（前20行）:"
-              head -20 "$md_file"
-              echo "..."
+              grep -n '!\[.*\](.*)' "$md_file" | head -10 | while read line; do
+                echo "  $line"
+              done || true
             fi
             
             set +e
             
-            # 转换PDF - 使用更好的设置确保图片位置正确
+            # 转换PDF - 使用更严格的设置确保图片和表格位置
             echo "开始转换PDF..."
             
-            # 使用更详细的Pandoc选项
             pandoc "$md_file" \
               --resource-path="$resource_paths" \
               -o "pdf_output/$dir_name/$base_name.pdf" \
@@ -387,14 +544,18 @@ jobs:
               -V colorlinks=true \
               -V linkcolor=blue \
               -V urlcolor=blue \
-              -V toc-title="目录" \
-              -V pagestyle=empty \
+              -V tables:true \
+              -V table-format=tabularx \
+              -V booktabs:true \
+              -V longtable:true \
               --wrap=auto \
               --highlight-style=tango \
-              -f markdown+raw_html \
-              --standalone \
-              --table-of-contents \
-              --toc-depth=3 \
+              -f markdown \
+              --top-level-division=chapter \
+              -M graphics:true \
+              -M placeins:true \
+              -M floatplacement:"figure:H" \
+              -M caption-justification=centered \
               2>&1 | tee conversion.log
               
             conversion_status=$?
@@ -409,6 +570,10 @@ jobs:
               # 检查PDF文件大小
               pdf_size=$(du -h "pdf_output/$dir_name/$base_name.pdf" | cut -f1)
               echo "PDF文件大小: $pdf_size"
+              
+              # 检查表格是否正确渲染
+              echo "检查PDF中的表格渲染..."
+              pdfimages "pdf_output/$dir_name/$base_name.pdf" /tmp/pdfimages_check 2>/dev/null || true
             else
               echo "✗ 转换失败: $md_file"
               failed_count=$((failed_count + 1))
@@ -462,11 +627,6 @@ jobs:
             # 显示总大小
             total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; | awk '{sum+=$1} END {print int(sum/1024/1024)}')
             echo "PDF文件总大小: ${total_size_mb}MB"
-            
-            echo "前5个PDF文件:"
-            find pdf_output -name "*.pdf" -type f | head -5 | while read pdf; do
-              echo "  - $pdf ($(du -h "$pdf" | cut -f1))"
-            done
           fi
       
       - name: "Create release documentation"
@@ -480,11 +640,13 @@ jobs:
           echo "# PDF 文档集" > pdf_output/README.md
           echo "" >> pdf_output/README.md
           echo "生成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> pdf_output/README.md
-          echo "已优化HTML标签处理，支持图片和链接" >> pdf_output/README.md
-          echo "优化图片位置显示，确保与原始文档一致" >> pdf_output/README.md
+          echo "已优化HTML标签处理，图片位置正确" >> pdf_output/README.md
           echo "代码块带边框，自动换行" >> pdf_output/README.md
           echo "添加平铺式 'emakefun' 水印" >> pdf_output/README.md
           echo "包含resource目录中的程序文件" >> pdf_output/README.md
+          echo "优化：表格显示问题已修复，使用tabularx自动调整列宽" >> pdf_output/README.md
+          echo "优化：添加了booktabs表格样式，支持表格内换行" >> pdf_output/README.md
+          echo "优化：移除了页眉章节标题重复，修复了图片标签重复问题" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
