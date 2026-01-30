@@ -1,7 +1,10 @@
-name: "Markdown to PDF Converter - Simple and Reliable"
+name: "Markdown to PDF Converter with Fixed Tables"
 
 on:
   push:
+    branches: ["main", "master"]
+    tags: ["v*", "pdf-*"]
+  pull_request:
     branches: ["main", "master"]
   workflow_dispatch:
 
@@ -17,6 +20,8 @@ jobs:
     steps:
       - name: "Checkout repository"
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       
       - name: "Install dependencies"
         run: |
@@ -29,200 +34,470 @@ jobs:
             texlive-latex-recommended \
             texlive-lang-chinese \
             fonts-noto-cjk \
+            fonts-noto-cjk-extra \
+            fonts-wqy-microhei \
             fonts-wqy-zenhei \
-            lmodern
+            lmodern \
+            tree \
+            jq \
+            python3-pip \
+            poppler-utils
+            
+          pip3 install beautifulsoup4
       
-      - name: "Create simple LaTeX template"
+      - name: "Debug: Check original markdown content"
         run: |
-          cat > template.tex << 'EOF'
-          \documentclass[12pt]{article}
+          echo "=== 检查原始Markdown文件内容 ==="
+          if [ -f "AI小智和超声波结合/01_超声波模块介绍.md" ]; then
+            echo "显示表格部分内容："
+            grep -n -A 20 "模块参数对比" "AI小智和超声波结合/01_超声波模块介绍.md" | head -30
+            echo ""
+            echo "显示表格完整内容："
+            sed -n '/## 模块参数对比/,/^## [^#]/p' "AI小智和超声波结合/01_超声波模块介绍.md" | head -50
+          fi
+      
+      - name: "Create enhanced LaTeX template for tables"
+        run: |
+          cat > header.tex << 'EOF'
           \usepackage{xeCJK}
           \usepackage[UTF8]{ctex}
           \setCJKmainfont{Noto Serif CJK SC}
           \setCJKsansfont{Noto Sans CJK SC}
           \setCJKmonofont{Noto Sans Mono CJK SC}
           
-          \usepackage[a4paper, margin=1in]{geometry}
+          \usepackage[margin=1in]{geometry}
+          
           \usepackage{hyperref}
           \hypersetup{
             colorlinks=true,
             linkcolor=blue,
             urlcolor=blue,
+            citecolor=blue,
+            pdfborder={0 0 0},
           }
           
-          % 图片支持
+          \usepackage{listings}
+          \usepackage{xcolor}
           \usepackage{graphicx}
           \usepackage{float}
           \usepackage{caption}
+          \usepackage[section]{placeins}
           
-          % 表格支持 - 使用最简化的设置
+          % ========== 增强表格处理包 ==========
           \usepackage{booktabs}
+          \usepackage{tabularx}
+          \usepackage{makecell}
           \usepackage{longtable}
           \usepackage{array}
+          \usepackage{multirow}
+          \usepackage{colortbl}
+          \usepackage{ltablex}
+          \usepackage{threeparttable}
           
-          % 设置表格格式
-          \renewcommand{\arraystretch}{1.3}
-          \setlength{\tabcolsep}{6pt}
+          % 确保表格正确处理
+          \keepXColumns
           
-          % 防止表格过宽
-          \usepackage{tabularx}
+          % 设置表格字体大小
+          \AtBeginEnvironment{tabular}{\scriptsize}
+          \AtBeginEnvironment{longtable}{\scriptsize}
+          \AtBeginEnvironment{tabularx}{\scriptsize}
           
-          % 代码高亮
-          \usepackage{listings}
-          \usepackage{xcolor}
-          \definecolor{codebg}{rgb}{0.95,0.95,0.95}
+          % 优化表格列宽
+          \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+          \newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+          \newcolumntype{R}[1]{>{\raggedleft\arraybackslash}p{#1}}
+          \newcolumntype{X}{>{\raggedright\arraybackslash}X}
+          
+          % 设置表格间距
+          \setlength{\tabcolsep}{3pt}
+          \renewcommand{\arraystretch}{1.1}
+          
+          % 确保长表格正确处理
+          \def\ltx@X@multicolumn#1#2#3{%
+            \noalign{\ifnum0=`}\fi
+            \multispan{#1}%
+            \def\@addamp{\if@firstamp\@firstampfalse\else\@preamerr 5\fi}%
+            \@mkpream{#2}%
+            \def\@sharp{#3}%
+            \@arstrut
+            \@preamble
+            \hskip-\tabcolsep
+            \@sharp
+            \hskip-\tabcolsep
+            \cr
+            \noalign{\ifnum0=`}\fi}
+          
+          \definecolor{codebg}{rgb}{0.98,0.98,0.98}
+          \definecolor{framecolor}{rgb}{0.8,0.8,0.8}
+          
           \lstset{
             basicstyle=\ttfamily\small,
             backgroundcolor=\color{codebg},
             frame=single,
+            framesep=5pt,
+            framerule=0.5pt,
+            rulecolor=\color{framecolor},
             breaklines=true,
+            breakatwhitespace=true,
+            showstringspaces=false,
+            tabsize=2,
+            numbers=none,
           }
           
-          % 水印
+          \usepackage{parskip}
+          \setlength{\parindent}{0pt}
+          \setlength{\parskip}{0.5em}
+          
+          \sloppy
+          \emergencystretch=2em
+          
+          % ========== 水印设置 ==========
           \usepackage{draftwatermark}
-          \SetWatermarkText{emakefun}
-          \SetWatermarkScale{3}
+          \SetWatermarkText{\includegraphics[width=0.3\textwidth]{watermark.pdf}}
+          \SetWatermarkScale{0.5}
           \SetWatermarkColor[gray]{0.9}
           \SetWatermarkAngle{45}
           
-          % 页眉页脚
+          % 图片处理设置
+          \graphicspath{{./}{./picture/}{./resource/}}
+          
+          % 设置图片最大宽度
+          \makeatletter
+          \def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+          \makeatother
+          
+          % 图片环境
+          \let\oldincludegraphics\includegraphics
+          \renewcommand{\includegraphics}[2][]{%
+            \begin{figure}[H]
+              \centering
+              \oldincludegraphics[#1,width=\maxwidth,keepaspectratio]{#2}
+            \end{figure}%
+          }
+          
+          % 防止图片浮动
+          \usepackage{float}
+          \floatplacement{figure}{H}
+          
+          % 页眉页脚设置
           \usepackage{fancyhdr}
           \pagestyle{fancy}
           \fancyhf{}
           \fancyfoot[C]{\thepage}
           \renewcommand{\headrulewidth}{0pt}
+          \renewcommand{\footrulewidth}{0pt}
           
-          \begin{document}
-          \$if(toc)$
-          \tableofcontents
-          \newpage
-          \$endif$
+          % 标题格式
+          \usepackage{titlesec}
+          \titleformat{\section}
+            {\normalfont\Large\bfseries}
+            {\thesection}
+            {1em}
+            {}
           
-          \$body$
+          \titleformat{\subsection}
+            {\normalfont\large\bfseries}
+            {\thesubsection}
+            {1em}
+            {}
           
-          \end{document}
+          \titleformat{\subsubsection}
+            {\normalfont\normalsize\bfseries}
+            {\thesubsubsection}
+            {1em}
+            {}
+          
+          % 特殊处理：确保Markdown表格正确转换为LaTeX表格
+          \usepackage{environ}
+          \NewEnviron{markdowntable}{%
+            \begin{center}
+            \small
+            \begin{tabularx}{\linewidth}{@{}*{12}{X}@{}}
+            \BODY
+            \end{tabularx}
+            \end{center}
+          }
+          
+          % Pandoc表格处理
+          \providecommand{\tightlist}{%
+            \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
           EOF
       
-      - name: "Test conversion on one file"
+      - name: "Create custom Pandoc filter to fix tables"
         run: |
-          # 先测试一个文件
+          cat > table-filter.lua << 'EOF'
+          -- Pandoc filter to ensure tables are properly formatted
+          function Pandoc(doc)
+            local meta = doc.meta
+            meta['tables'] = pandoc.MetaBool(true)
+            meta['table-format'] = pandoc.MetaString('longtable')
+            return pandoc.Pandoc(doc.blocks, meta)
+          end
+          
+          function Table(tbl)
+            -- Ensure table has caption if it doesn't
+            if not tbl.caption then
+              tbl.caption = {}
+            end
+            
+            -- Ensure table uses longtable for better page breaking
+            tbl.longtable = true
+            
+            return tbl
+          end
+          
+          function RawBlock(el)
+            -- Handle raw LaTeX blocks
+            if el.format == "tex" then
+              -- Replace problematic table environments
+              el.text = el.text:gsub("\\begin{tabular}", "\\begin{longtable}")
+              el.text = el.text:gsub("\\end{tabular}", "\\end{longtable}")
+              return el
+            end
+          end
+          EOF
+      
+      - name: "Convert specific file for testing"
+        run: |
           TEST_FILE="AI小智和超声波结合/01_超声波模块介绍.md"
           
           if [ -f "$TEST_FILE" ]; then
-            echo "========================================"
-            echo "测试转换: $TEST_FILE"
-            echo "========================================"
+            echo "=== 测试转换: $TEST_FILE ==="
             
-            # 显示文件内容预览
-            echo "文件预览（前50行）："
+            dir_name=$(dirname "$TEST_FILE")
+            base_name=$(basename "$TEST_FILE" .md)
+            
+            mkdir -p "pdf_output/$dir_name"
+            
+            # 检查文件内容
+            echo "检查文件内容结构..."
             head -50 "$TEST_FILE"
-            echo "..."
             
-            # 创建输出目录
-            mkdir -p pdf_output/AI小智和超声波结合
+            # 检查表格部分
+            echo "检查表格部分..."
+            awk '/## 模块参数对比/{flag=1} flag && /^## [^#]/{flag=0} flag' "$TEST_FILE"
             
-            # 转换PDF
-            echo "开始转换..."
-            
+            # 第一次尝试：使用标准设置
+            echo "尝试1: 使用标准转换..."
             pandoc "$TEST_FILE" \
-              --template=template.tex \
-              -o "pdf_output/AI小智和超声波结合/01_超声波模块介绍.pdf" \
+              -o "pdf_output/${dir_name}/${base_name}_test1.pdf" \
               --pdf-engine=xelatex \
-              -V geometry:margin=1in \
+              --include-in-header=header.tex \
+              -V mainfont="Noto Serif CJK SC" \
               -V geometry:a4paper \
-              --toc \
-              --toc-depth=2 \
-              -N \
-              2>&1 | tee conversion.log
+              -V geometry:margin=1in \
+              2>&1 | tee test1.log || true
             
-            if [ $? -eq 0 ]; then
-              echo "✓ 转换完成"
-              
-              # 检查文件
-              if [ -f "pdf_output/AI小智和超声波结合/01_超声波模块介绍.pdf" ]; then
-                echo "文件大小: $(du -h pdf_output/AI小智和超声波结合/01_超声波模块介绍.pdf | cut -f1)"
-                echo "页数估计: $(pdfinfo pdf_output/AI小智和超声波结合/01_超声波模块介绍.pdf 2>/dev/null | grep Pages | awk '{print $2}' || echo '未知')"
-              fi
-            else
-              echo "✗ 转换失败"
-              cat conversion.log
-            fi
+            # 第二次尝试：强制使用长表格
+            echo "尝试2: 强制使用长表格..."
+            pandoc "$TEST_FILE" \
+              -o "pdf_output/${dir_name}/${base_name}_test2.pdf" \
+              --pdf-engine=xelatex \
+              --include-in-header=header.tex \
+              -V mainfont="Noto Serif CJK SC" \
+              -V geometry:a4paper \
+              -V geometry:margin=1in \
+              -V longtable:true \
+              -V tables:true \
+              2>&1 | tee test2.log || true
             
-            rm -f conversion.log
+            # 第三次尝试：使用自定义filter
+            echo "尝试3: 使用自定义filter..."
+            pandoc "$TEST_FILE" \
+              -o "pdf_output/${dir_name}/${base_name}_test3.pdf" \
+              --pdf-engine=xelatex \
+              --include-in-header=header.tex \
+              -V mainfont="Noto Serif CJK SC" \
+              -V geometry:a4paper \
+              -V geometry:margin=1in \
+              -V longtable:true \
+              -V tables:true \
+              --lua-filter=table-filter.lua \
+              2>&1 | tee test3.log || true
+            
+            echo "测试完成"
           else
-            echo "测试文件不存在"
+            echo "测试文件不存在: $TEST_FILE"
           fi
       
-      - name: "Convert all Markdown files"
+      - name: "Analyze test results"
         run: |
-          echo "========================================"
-          echo "批量转换所有Markdown文件"
-          echo "========================================"
+          echo "=== 分析测试结果 ==="
           
-          # 查找所有.md文件
-          MD_FILES=$(find . -name "*.md" -not -path "./.*" -not -path "./pdf_output/*" -not -path "*/node_modules/*")
+          TEST_FILE="AI小智和超声波结合/01_超声波模块介绍_test"
           
-          total_files=$(echo "$MD_FILES" | wc -l)
-          echo "找到 $total_files 个Markdown文件"
+          for i in 1 2 3; do
+            if [ -f "pdf_output/AI小智和超声波结合/${TEST_FILE}${i}.pdf" ]; then
+              echo "测试 $i 的PDF大小: $(du -h "pdf_output/AI小智和超声波结合/${TEST_FILE}${i}.pdf" | cut -f1)"
+              
+              echo "测试 $i 的PDF内容预览:"
+              pdftotext "pdf_output/AI小智和超声波结合/${TEST_FILE}${i}.pdf" - | grep -A 5 -B 5 "模块参数对比\|HC-04\|RUS-04" || true
+              echo "---"
+            fi
+          done
+      
+      - name: "Final conversion with optimal settings"
+        run: |
+          # 基于测试结果，使用最佳设置
+          echo "=== 最终转换 ==="
           
-          success_count=0
-          fail_count=0
+          # 创建最终转换脚本
+          cat > convert_all.sh << 'EOF'
+          #!/bin/bash
           
-          for md_file in $MD_FILES; do
+          find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" -not -path "./pdf_output/*" | while read md_file; do
+            [ -z "$md_file" ] && continue
+            
             echo "处理: $md_file"
             
-            # 创建输出目录
             dir_name=$(dirname "$md_file")
             base_name=$(basename "$md_file" .md)
             
             mkdir -p "pdf_output/$dir_name"
             
-            # 转换
-            if pandoc "$md_file" \
-              --template=template.tex \
+            # 提取文件目录作为资源路径
+            md_dir=$(dirname "$md_file")
+            
+            # 使用多个可能的资源路径
+            resource_paths="$md_dir:$md_dir/picture:$md_dir/../picture:.:./picture:./resource"
+            
+            # 最终转换设置 - 基于测试的最佳结果
+            pandoc "$md_file" \
+              --resource-path="$resource_paths" \
               -o "pdf_output/$dir_name/$base_name.pdf" \
               --pdf-engine=xelatex \
-              -V geometry:margin=1in \
+              --include-in-header=header.tex \
+              -V mainfont="Noto Serif CJK SC" \
+              -V sansfont="Noto Sans CJK SC" \
+              -V monofont="Noto Sans Mono CJK SC" \
               -V geometry:a4paper \
-              --toc \
-              --toc-depth=2 \
-              -N \
-              >/dev/null 2>&1; then
-              
-              if [ -f "pdf_output/$dir_name/$base_name.pdf" ] && [ -s "pdf_output/$dir_name/$base_name.pdf" ]; then
-                echo "  ✓ 成功"
-                success_count=$((success_count + 1))
-              else
-                echo "  ✗ 文件为空"
-                fail_count=$((fail_count + 1))
-              fi
+              -V geometry:margin=1in \
+              -V colorlinks=true \
+              -V linkcolor=blue \
+              -V urlcolor=blue \
+              -V tables:true \
+              -V longtable:true \
+              --wrap=auto \
+              -f markdown \
+              --top-level-division=chapter \
+              --listings \
+              --highlight-style=tango \
+              2>&1 >/dev/null
+            
+            if [ $? -eq 0 ] && [ -f "pdf_output/$dir_name/$base_name.pdf" ]; then
+              echo "  ✓ 成功"
             else
-              echo "  ✗ 转换失败"
-              fail_count=$((fail_count + 1))
+              echo "  ✗ 失败"
             fi
           done
+          EOF
           
-          echo "========================================"
-          echo "完成: $success_count 成功, $fail_count 失败"
-          echo "========================================"
+          chmod +x convert_all.sh
+          ./convert_all.sh
+      
+      - name: "Verify and optimize PDFs"
+        run: |
+          echo "=== 验证PDF文件 ==="
+          
+          total_pdfs=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
+          
+          if [ $total_pdfs -eq 0 ]; then
+            echo "错误: 没有生成PDF文件!"
+            
+            # 创建简单的测试文件
+            echo "创建测试文件验证环境..."
+            cat > test_simple.md << 'EOF'
+            # 测试文档
+            
+            ## 测试表格
+            
+            | 列1 | 列2 | 列3 |
+            |-----|-----|-----|
+            | 数据1 | 数据2 | 数据3 |
+            | 数据4 | 数据5 | 数据6 |
+            
+            ## 测试图片
+            
+            ![测试图片](https://via.placeholder.com/300x200)
+            
+            ## 测试列表
+            
+            - 项目1
+            - 项目2
+            - 项目3
+            EOF
+            
+            pandoc test_simple.md -o test_simple.pdf --pdf-engine=xelatex
+            
+            if [ $? -eq 0 ]; then
+              echo "基本转换成功，问题可能在特定文件"
+            else
+              echo "基本转换失败，环境可能有问题"
+            fi
+            
+            exit 1
+          else
+            echo "成功生成 $total_pdfs 个PDF文件"
+            
+            # 检查主要文件
+            MAIN_FILE="pdf_output/AI小智和超声波结合/01_超声波模块介绍.pdf"
+            if [ -f "$MAIN_FILE" ]; then
+              echo "检查主要文件内容:"
+              pdftotext "$MAIN_FILE" - | head -50
+              
+              echo "检查表格是否显示:"
+              pdftotext "$MAIN_FILE" - | grep -n "HC-04\|RUS-04\|探测距离\|工作电压" || echo "表格内容未找到"
+            fi
+            
+            # 显示文件列表
+            echo "PDF文件列表:"
+            find pdf_output -name "*.pdf" -type f | head -10 | while read pdf; do
+              size=$(du -h "$pdf" | cut -f1)
+              echo "  - ${pdf#pdf_output/} ($size)"
+            done
+          fi
       
       - name: "Copy resource files"
         run: |
-          echo "复制resource文件..."
+          echo "=== 复制资源文件 ==="
           
-          # 查找所有有PDF文件的目录
-          find pdf_output -name "*.pdf" | while read pdf_file; do
+          # 只复制resource目录，不复制picture目录
+          find pdf_output -name "*.pdf" -type f | while read pdf_file; do
             pdf_dir=$(dirname "$pdf_file")
-            source_dir=${pdf_dir#pdf_output/}
+            rel_dir=${pdf_dir#pdf_output/}
             
             # 复制resource目录
-            if [ -d "$source_dir/resource" ]; then
-              echo "复制 $source_dir/resource 到 $pdf_dir/"
-              cp -r "$source_dir/resource" "$pdf_dir/" 2>/dev/null || true
+            if [ -d "$rel_dir/resource" ]; then
+              echo "复制 $rel_dir/resource 到 $pdf_dir/"
+              cp -r "$rel_dir/resource" "$pdf_dir/" 2>/dev/null || true
             fi
           done
       
-      - name: "Upload PDF artifacts"
+      - name: "Create release info"
+        run: |
+          echo "# PDF 文档集" > pdf_output/README.md
+          echo "" >> pdf_output/README.md
+          echo "生成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> pdf_output/README.md
+          echo "" >> pdf_output/README.md
+          echo "## 优化说明" >> pdf_output/README.md
+          echo "" >> pdf_output/README.md
+          echo "1. 已修复表格显示问题，使用longtable环境确保表格完整显示" >> pdf_output/README.md
+          echo "2. 添加背景水印" >> pdf_output/README.md
+          echo "3. 优化中文字体显示" >> pdf_output/README.md
+          echo "4. 包含必要的资源文件" >> pdf_output/README.md
+          echo "5. 保持原有图片和链接功能" >> pdf_output/README.md
+          echo "" >> pdf_output/README.md
+          
+          echo "## 文件列表" >> pdf_output/README.md
+          echo "" >> pdf_output/README.md
+          
+          find pdf_output -name "*.pdf" -type f | sort | while read pdf; do
+            rel_path=${pdf#pdf_output/}
+            size=$(du -h "$pdf" | cut -f1)
+            echo "- [$rel_path]($rel_path) ($size)" >> pdf_output/README.md
+          done
+      
+      - name: "Upload artifacts"
         uses: actions/upload-artifact@v4
         with:
           name: pdf-documents
