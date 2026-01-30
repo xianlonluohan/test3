@@ -41,26 +41,38 @@ jobs:
             tree \
             jq \
             python3-pip \
-            ghostscript \
-            poppler-utils
+            poppler-utils \
+            imagemagick
           
           pip3 install beautifulsoup4
       
-      - name: "Set up output directory"
+      - name: "Prepare working directory"
         run: |
+          # 创建所有必要的目录
           mkdir -p pdf_output
+          mkdir -p temp_images
+          
+          # 收集所有图片到一个目录，方便pandoc查找
+          echo "收集所有图片文件..."
+          find . -name "*.png" -o -name "*.jpg" -o -name "*.jpeg" -o -name "*.gif" | head -50
       
-      - name: "Create optimized LaTeX template"
+      - name: "Create robust LaTeX template"
         run: |
           cat > header.tex << 'EOF'
+          % 基本设置
+          \documentclass[a4paper]{article}
+          
+          % 中文支持
           \usepackage{xeCJK}
           \usepackage[UTF8]{ctex}
           \setCJKmainfont{Noto Serif CJK SC}
           \setCJKsansfont{Noto Sans CJK SC}
           \setCJKmonofont{Noto Sans Mono CJK SC}
           
-          \usepackage[margin=1.2in]{geometry}
+          % 页面设置
+          \usepackage[margin=1in]{geometry}
           
+          % 超链接
           \usepackage{hyperref}
           \hypersetup{
             colorlinks=true,
@@ -70,66 +82,9 @@ jobs:
             pdfborder={0 0 0},
           }
           
+          % 代码块
           \usepackage{listings}
           \usepackage{xcolor}
-          \usepackage{graphicx}
-          \usepackage{float}
-          \usepackage{caption}
-          \usepackage[section]{placeins}
-          
-          % ================== 表格优化配置 ==================
-          \usepackage{tabularx}
-          \usepackage{longtable}
-          \usepackage{booktabs}
-          \usepackage{array}
-          \usepackage{multirow}
-          \usepackage{makecell}
-          \usepackage{adjustbox}
-          
-          % 设置表格列宽自动调整
-          \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
-          \newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
-          \newcolumntype{R}[1]{>{\raggedleft\arraybackslash}p{#1}}
-          
-          % 调整表格字体大小
-          \let\oldlongtable\longtable
-          \let\endoldlongtable\endlongtable
-          \renewenvironment{longtable}[1]{
-            \scriptsize
-            \begin{oldlongtable}{#1}
-          }{
-            \end{oldlongtable}
-          }
-          
-          % 重定义tabular环境以适应页面宽度
-          \let\oldtabular\tabular
-          \let\endoldtabular\endtabular
-          \renewenvironment{tabular}[1]{
-            \scriptsize
-            \centering
-            \setlength{\tabcolsep}{2pt}
-            \renewcommand{\arraystretch}{1.0}
-            \begin{oldtabular}{#1}
-          }{
-            \end{oldtabular}
-          }
-          
-          % 处理Markdown表格的特殊情况
-          \usepackage{etoolbox}
-          \AtBeginEnvironment{longtable}{
-            \scriptsize
-            \centering
-            \setlength{\tabcolsep}{2pt}
-            \renewcommand{\arraystretch}{1.0}
-          }
-          
-          \AtBeginEnvironment{tabular}{
-            \scriptsize
-            \centering
-            \setlength{\tabcolsep}{2pt}
-            \renewcommand{\arraystretch}{1.0}
-          }
-          % ================== 表格优化结束 ==================
           
           \definecolor{codebg}{rgb}{0.98,0.98,0.98}
           \definecolor{framecolor}{rgb}{0.8,0.8,0.8}
@@ -156,13 +111,39 @@ jobs:
             keepspaces=true,
           }
           
+          % 图片处理
+          \usepackage{graphicx}
+          \usepackage{float}
+          \usepackage{caption}
+          
+          % 表格优化
+          \usepackage{tabularx}
+          \usepackage{longtable}
+          \usepackage{booktabs}
+          \usepackage{array}
+          
+          % 设置表格字体更小
+          \let\oldlongtable\longtable
+          \let\endoldlongtable\endlongtable
+          \renewenvironment{longtable}[1]{
+            \footnotesize
+            \setlength{\tabcolsep}{3pt}
+            \renewcommand{\arraystretch}{1.0}
+            \begin{oldlongtable}{#1}
+          }{
+            \end{oldlongtable}
+          }
+          
+          % 段落设置
           \usepackage{parskip}
           \setlength{\parindent}{0pt}
           \setlength{\parskip}{0.8em}
           
+          % 防止溢出
           \sloppy
           \setlength{\emergencystretch}{3em}
           
+          % 水印
           \usepackage{eso-pic}
           \usepackage{tikz}
           \usetikzlibrary{calc}
@@ -205,60 +186,28 @@ jobs:
           
           \AddToShipoutPictureBG{\BackgroundPicture}
           
-          % 图片处理设置 - 确保图片位置正确
-          \graphicspath{{./}{./picture/}{./resource/}{../picture/}{../../picture/}}
+          % 图片路径设置
+          \graphicspath{{./}{./picture/}{../picture/}{../../picture/}{../../../picture/}}
           
-          % 设置图片最大宽度为行宽
+          % 图片宽度设置
           \makeatletter
           \def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
           \makeatother
           
-          % 重新定义图片环境，确保图片位置固定，不自动生成标签
-          \let\oldincludegraphics\includegraphics
-          \renewcommand{\includegraphics}[2][]{%
-            \begin{figure}[H]
-              \centering
-              \oldincludegraphics[#1,width=\maxwidth,keepaspectratio]{#2}
-            \end{figure}%
-          }
-          
-          % 防止图片浮动到错误位置
-          \usepackage{float}
-          \floatplacement{figure}{H}
-          
-          % 确保图片按顺序出现
-          \usepackage{placeins}
-          \AtBeginDocument{%
-            \let\oldfigure\figure
-            \renewcommand{\figure}[1][H]{%
-              \oldfigure[#1]%
-              \centering
-            }%
-          }
-          
-          % 关闭章节标题在页眉的显示
+          % 页眉页脚
           \usepackage{fancyhdr}
           \pagestyle{fancy}
-          \fancyhf{} % 清除所有页眉页脚
-          \fancyhead[L]{}
-          \fancyhead[C]{}
-          \fancyhead[R]{}
-          \fancyfoot[C]{\thepage} % 只在页脚居中显示页码
-          \renewcommand{\headrulewidth}{0pt} % 去掉页眉横线
-          \renewcommand{\footrulewidth}{0pt} % 去掉页脚横线
+          \fancyhf{}
+          \fancyfoot[C]{\thepage}
+          \renewcommand{\headrulewidth}{0pt}
+          \renewcommand{\footrulewidth}{0pt}
           
-          % 防止章节标题在页眉重复出现
-          \renewcommand{\chaptermark}[1]{}
+          % 防止标题重复
           \renewcommand{\sectionmark}[1]{}
+          \renewcommand{\subsectionmark}[1]{}
           
-          % 设置标题格式
+          % 标题格式
           \usepackage{titlesec}
-          \titleformat{\chapter}[display]
-            {\normalfont\huge\bfseries\centering}
-            {\chaptertitlename\ \thechapter}
-            {20pt}
-            {\Huge}
-          
           \titleformat{\section}
             {\normalfont\Large\bfseries}
             {\thesection}
@@ -272,31 +221,26 @@ jobs:
             {}
           EOF
       
-      - name: "Create optimized conversion script"
+      - name: "Process Markdown files one by one"
         run: |
-          cat > convert_md_to_pdf.sh << 'EOF'
-          #!/bin/bash
-          set -e
-          
-          echo "开始转换Markdown文件到PDF..."
+          # 创建日志目录
+          mkdir -p conversion_logs
           
           # 查找所有Markdown文件
-          MD_FILES=$(find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" -not -path "./pdf_output/*" | sort)
+          MD_FILES=$(find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" -not -path "./pdf_output/*" -not -path "./conversion_logs/*" | sort)
           
           total_count=0
           success_count=0
           fail_count=0
           
+          echo "开始处理Markdown文件..."
+          
           for md_file in $MD_FILES; do
-            if [ ! -f "$md_file" ]; then
-              continue
-            fi
-            
             total_count=$((total_count + 1))
             
             echo ""
             echo "========================================"
-            echo "处理文件 ($total_count): $md_file"
+            echo "处理文件 $total_count: $md_file"
             echo "========================================"
             
             # 获取目录和文件名
@@ -306,31 +250,63 @@ jobs:
             # 创建输出目录
             mkdir -p "pdf_output/$dir_name"
             
-            # 构建资源路径 - 包含多个可能的路径
-            md_dir=$(dirname "$md_file")
-            resource_paths="$md_dir:$md_dir/picture:$md_dir/../picture:$md_dir/../../picture:.:./picture:./resource:..:../.."
+            # 检查文件是否存在
+            if [ ! -f "$md_file" ]; then
+              echo "文件不存在: $md_file"
+              fail_count=$((fail_count + 1))
+              continue
+            fi
+            
+            # 备份原始文件
+            cp "$md_file" "${md_file}.backup"
+            
+            # 创建临时文件，修复图片路径
+            temp_md=$(mktemp)
+            
+            # 修复图片路径 - 使用sed处理所有可能的图片引用格式
+            echo "修复图片路径..."
+            
+            # 方法1: 先复制图片到本地目录
+            # 提取所有图片引用
+            images=$(grep -o '!\[.*\]([^)]*)' "$md_file" | sed -e 's/.*](//' -e 's/)//' | grep -v '^http' || true)
+            
+            # 方法2: 使用更简单的sed替换
+            # 创建临时文件进行处理
+            cat "$md_file" > "$temp_md"
+            
+            # 尝试修复 ./picture/ 开头的路径
+            sed -i 's|!\[\(.*\)\](\./picture/\(.*\))|![\1](picture/\2)|g' "$temp_md"
+            
+            # 尝试修复 picture/ 开头的路径（但没有./）
+            sed -i 's|!\[\(.*\)\](picture/\(.*\))|![\1](picture/\2)|g' "$temp_md"
+            
+            # 尝试修复相对路径
+            sed -i 's|!\[\(.*\)\](\.\./\(.*\))|![\1](../\2)|g' "$temp_md"
+            
+            # 构建资源路径 - 包括所有可能的目录
+            resource_paths=".:$dir_name:$dir_name/picture:$(dirname "$dir_name")/picture:$(dirname "$(dirname "$dir_name")")/picture"
+            
+            # 添加绝对路径
+            current_dir=$(pwd)
+            resource_paths="$resource_paths:$current_dir:$current_dir/$dir_name:$current_dir/$dir_name/picture"
             
             echo "资源路径: $resource_paths"
             
-            # 临时文件，用于修复Markdown中的图片引用
-            temp_md=$(mktemp)
+            # 记录转换命令
+            echo "开始转换..."
             
-            # 修复Markdown文件中的图片路径
-            sed -E 's|!\[([^]]*)\]\(\./([^)]+)\)|![\1](\2)|g' "$md_file" | \
-            sed -E 's|!\[([^]]*)\]\(picture/([^)]+)\)|![\1](picture/\2)|g' | \
-            sed -E 's|!\[([^]]*)\]\(\./picture/([^)]+)\)|![\1](picture/\2)|g' > "$temp_md"
-            
-            # 构建pandoc命令
-            cmd="pandoc \"$temp_md\" \
-              --resource-path=\"$resource_paths\" \
-              -o \"pdf_output/$dir_name/$base_name.pdf\" \
+            # 使用pandoc转换
+            set +e
+            pandoc "$temp_md" \
+              --resource-path="$resource_paths" \
+              -o "pdf_output/$dir_name/$base_name.pdf" \
               --pdf-engine=xelatex \
               --listings \
               --include-in-header=header.tex \
-              -V mainfont=\"Noto Serif CJK SC\" \
-              -V sansfont=\"Noto Sans CJK SC\" \
-              -V monofont=\"Noto Sans Mono CJK SC\" \
-              -V geometry:margin=1.2in \
+              -V mainfont="Noto Serif CJK SC" \
+              -V sansfont="Noto Sans CJK SC" \
+              -V monofont="Noto Sans Mono CJK SC" \
+              -V geometry:margin=1in \
               -V geometry:a4paper \
               -V colorlinks=true \
               -V linkcolor=blue \
@@ -338,209 +314,199 @@ jobs:
               --wrap=auto \
               --highlight-style=tango \
               -f markdown \
-              --top-level-division=chapter \
+              --top-level-division=section \
               --variable tables \
-              --variable longtable \
-              --variable booktabs \
-              --variable tabcolsep=2"
+              2>&1 | tee "conversion_logs/${base_name}_$(date +%s).log"
             
-            # 执行转换
-            if eval "$cmd" 2>&1 | tee conversion.log; then
-              if [ -f "pdf_output/$dir_name/$base_name.pdf" ] && [ -s "pdf_output/$dir_name/$base_name.pdf" ]; then
-                echo "✓ 成功转换: $md_file"
-                success_count=$((success_count + 1))
-                
-                # 检查PDF文件大小
-                pdf_size=$(du -h "pdf_output/$dir_name/$base_name.pdf" | cut -f1)
-                echo "PDF文件大小: $pdf_size"
-              else
-                echo "✗ 转换失败: 生成的文件为空或不存在"
-                fail_count=$((fail_count + 1))
-              fi
+            conversion_status=$?
+            set -e
+            
+            # 恢复备份
+            mv "${md_file}.backup" "$md_file"
+            
+            # 检查转换结果
+            if [ $conversion_status -eq 0 ] && [ -f "pdf_output/$dir_name/$base_name.pdf" ] && [ -s "pdf_output/$dir_name/$base_name.pdf" ]; then
+              echo "✓ 成功转换: $md_file"
+              success_count=$((success_count + 1))
+              
+              # 检查PDF文件
+              pdf_size=$(du -h "pdf_output/$dir_name/$base_name.pdf" | cut -f1)
+              echo "PDF大小: $pdf_size"
             else
-              echo "✗ 转换失败: pandoc命令执行失败"
+              echo "✗ 转换失败: $md_file"
               fail_count=$((fail_count + 1))
               
-              # 显示错误日志
-              if [ -f "conversion.log" ]; then
-                echo "转换日志:"
-                tail -50 conversion.log
+              # 尝试使用简化的方法
+              echo "尝试简化转换..."
+              set +e
+              pandoc "$md_file" \
+                -o "pdf_output/$dir_name/${base_name}_simple.pdf" \
+                --pdf-engine=xelatex \
+                -V mainfont="Noto Serif CJK SC" \
+                -V geometry:margin=1in \
+                -V geometry:a4paper \
+                2>&1 | tee -a "conversion_logs/${base_name}_simple_$(date +%s).log"
+              
+              if [ -f "pdf_output/$dir_name/${base_name}_simple.pdf" ] && [ -s "pdf_output/$dir_name/${base_name}_simple.pdf" ]; then
+                echo "✓ 简化版转换成功"
+                mv "pdf_output/$dir_name/${base_name}_simple.pdf" "pdf_output/$dir_name/$base_name.pdf"
+                success_count=$((success_count + 1))
+                fail_count=$((fail_count - 1))
               fi
+              set -e
             fi
             
             # 清理临时文件
-            rm -f "$temp_md" conversion.log 2>/dev/null || true
+            rm -f "$temp_md"
             
-            # 为了避免资源占用，每处理5个文件稍作等待
-            if [ $((total_count % 5)) -eq 0 ]; then
-              echo "已处理 $total_count 个文件，稍作等待..."
-              sleep 2
-            fi
+            # 显示进度
+            echo "进度: $success_count/$total_count 成功"
+            
+            # 避免CPU过载
+            sleep 1
           done
           
           echo ""
           echo "========================================"
-          echo "转换汇总: 总共 $total_count 个文件"
+          echo "转换完成"
+          echo "总计: $total_count 个文件"
           echo "成功: $success_count 个"
           echo "失败: $fail_count 个"
           echo "========================================"
           
-          if [ $success_count -eq 0 ]; then
-            echo "警告: 没有成功转换任何文件!"
-            exit 1
-          fi
-          
-          exit 0
-          EOF
-          
-          chmod +x convert_md_to_pdf.sh
+          # 列出所有生成的PDF
+          echo "生成的PDF文件:"
+          find pdf_output -name "*.pdf" -type f | sort
       
-      - name: "Convert Markdown to PDF"
+      - name: "Check and fix PDF generation"
         run: |
-          ./convert_md_to_pdf.sh
-      
-      - name: "Fix missing images in PDFs"
-        run: |
-          echo "检查PDF文件中缺失的图片..."
+          echo "检查PDF生成结果..."
           
-          # 首先尝试找到所有图片文件
-          echo "查找所有图片文件..."
-          find . -name "*.png" -o -name "*.jpg" -o -name "*.jpeg" -o -name "*.gif" | head -20
-          
-          # 检查转换后的PDF
-          pdf_count=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
-          
-          if [ $pdf_count -eq 0 ]; then
-            echo "警告: 没有生成PDF文件!"
-            echo "尝试直接转换一个测试文件..."
-            
-            # 创建一个测试转换
-            mkdir -p pdf_output/test
-            echo "# 测试文件" > test.md
-            echo "这是一个测试文件" >> test.md
-            echo "![测试图片](https://via.placeholder.com/150)" >> test.md
-            
-            pandoc test.md \
-              -o pdf_output/test/test.pdf \
-              --pdf-engine=xelatex \
-              --include-in-header=header.tex \
-              -V mainfont="Noto Serif CJK SC" \
-              -V geometry:margin=1.2in \
-              -V geometry:a4paper
-            
-            rm -f test.md
-          fi
-          
-          echo "总共生成 $pdf_count 个PDF文件"
-      
-      - name: "Copy resource directories to output"
-        run: |
-          echo "复制resource目录到输出目录..."
-          
-          # 查找所有有PDF文件的目录，复制对应的resource目录
-          find pdf_output -name "*.pdf" -type f | while read pdf_file; do
-            pdf_dir=$(dirname "$pdf_file")
-            rel_dir=${pdf_dir#pdf_output/}
-            
-            # 如果原始目录下有resource目录，则复制到输出目录
-            if [ -d "$rel_dir/resource" ]; then
-              echo "复制 $rel_dir/resource 到 $pdf_dir/"
-              cp -r "$rel_dir/resource" "$pdf_dir/" 2>/dev/null || echo "无法复制 $rel_dir/resource"
-            fi
-          done
-      
-      - name: "Verify PDF files"
-        run: |
           total_pdfs=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
           
           if [ $total_pdfs -eq 0 ]; then
-            echo "错误: 没有生成PDF文件!"
+            echo "警告: 没有生成任何PDF文件!"
+            echo "尝试最后的手段: 使用最基本的方法转换..."
             
-            # 显示目录结构，帮助调试
+            # 查找一个示例文件
+            sample_file=$(find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" | head -1)
+            
+            if [ -n "$sample_file" ]; then
+              echo "找到示例文件: $sample_file"
+              dir_name=$(dirname "$sample_file")
+              base_name=$(basename "$sample_file" .md)
+              
+              mkdir -p "pdf_output/$dir_name"
+              
+              # 使用最基本的转换
+              pandoc "$sample_file" \
+                -o "pdf_output/$dir_name/$base_name.pdf" \
+                --pdf-engine=xelatex \
+                -V mainfont="Noto Serif CJK SC" \
+                -V geometry:margin=1in
+              
+              if [ -f "pdf_output/$dir_name/$base_name.pdf" ]; then
+                echo "示例文件转换成功"
+              fi
+            fi
+          fi
+          
+          # 最终检查
+          total_pdfs=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
+          echo "总共生成 $total_pdfs 个PDF文件"
+          
+          if [ $total_pdfs -eq 0 ]; then
+            echo "错误: 没有PDF文件生成!"
+            
+            # 显示目录结构以帮助调试
             echo "当前目录结构:"
-            find . -name "*.md" | head -20
+            find . -maxdepth 3 -type f -name "*.md" | head -20
             echo ""
-            echo "图片文件:"
-            find . -name "*.png" -o -name "*.jpg" -o -name "*.jpeg" | head -20
+            echo "Markdown文件总数:"
+            find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" | wc -l
             
             exit 1
-          else
-            echo "总共生成 $total_pdfs 个PDF文件"
-            
-            # 显示总大小
-            total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; 2>/dev/null | awk '{sum+=$1} END {print int(sum/1024/1024)}' || echo "0")
-            echo "PDF文件总大小: ${total_size_mb}MB"
-            
-            # 列出所有生成的PDF
-            echo "生成的PDF文件:"
-            find pdf_output -name "*.pdf" -type f | sort | head -20
           fi
       
-      - name: "Create release documentation"
+      - name: "Copy resources to output"
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            TAG_NAME="${GITHUB_REF#refs/tags/}"
-          else
-            TAG_NAME="latest"
-          fi
+          echo "复制资源文件到输出目录..."
           
-          echo "# PDF 文档集" > pdf_output/README.md
+          # 复制resource目录
+          find . -type d -name "resource" | while read resource_dir; do
+            # 计算相对路径
+            rel_path=$(echo "$resource_dir" | sed 's|^\./||')
+            
+            # 找到对应的输出目录
+            pdf_dirs=$(find pdf_output -type f -name "*.pdf" | xargs dirname | sort -u)
+            
+            for pdf_dir in $pdf_dirs; do
+              # 检查是否应该复制到这个目录
+              if echo "$pdf_dir" | grep -q "${rel_path%/resource}"; then
+                echo "复制 $resource_dir 到 $pdf_dir/"
+                cp -r "$resource_dir" "$pdf_dir/" 2>/dev/null || true
+              fi
+            done
+          done
+      
+      - name: "Create summary report"
+        run: |
+          echo "# PDF转换报告" > pdf_output/README.md
           echo "" >> pdf_output/README.md
           echo "生成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> pdf_output/README.md
-          echo "已优化表格显示，解决表格过大问题" >> pdf_output/README.md
-          echo "代码块带边框，自动换行" >> pdf_output/README.md
-          echo "添加平铺式 'emakefun' 水印" >> pdf_output/README.md
-          echo "包含resource目录中的程序文件" >> pdf_output/README.md
-          echo "优化：修复了图片路径问题，确保图片正确显示" >> pdf_output/README.md
-          echo "优化：简化了转换流程，提高成功率" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
+          # 统计PDF文件
+          pdf_files=$(find pdf_output -name "*.pdf" -type f | sort)
+          pdf_count=$(echo "$pdf_files" | wc -l)
+          
+          echo "## 转换统计" >> pdf_output/README.md
+          echo "" >> pdf_output/README.md
+          echo "- 总PDF文件数: $pdf_count" >> pdf_output/README.md
+          
+          # 计算总大小
+          total_size=0
+          for pdf in $pdf_files; do
+            size=$(stat -c%s "$pdf" 2>/dev/null || stat -f%z "$pdf" 2>/dev/null || echo "0")
+            total_size=$((total_size + size))
+          done
+          
+          total_size_mb=$((total_size / 1024 / 1024))
+          echo "- 总大小: ${total_size_mb}MB" >> pdf_output/README.md
+          
+          echo "" >> pdf_output/README.md
           echo "## 文件列表" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
-          PDF_COUNT=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
+          # 按目录分组
+          declare -A dir_files
           
-          current_dir=""
-          find pdf_output -name "*.pdf" -type f | sort | while read pdf_file; do
-            rel_path=${pdf_file#pdf_output/}
+          for pdf in $pdf_files; do
+            rel_path=${pdf#pdf_output/}
             dir_name=$(dirname "$rel_path")
             file_name=$(basename "$rel_path")
-            file_size=$(du -h "$pdf_file" 2>/dev/null | cut -f1 || echo "未知")
+            file_size=$(du -h "$pdf" 2>/dev/null | cut -f1 || echo "未知")
             
-            if [ "$current_dir" != "$dir_name" ]; then
-              current_dir="$dir_name"
-              if [ "$dir_name" != "." ]; then
-                echo "### $dir_name/" >> pdf_output/README.md
-                echo "" >> pdf_output/README.md
-              fi
+            if [ "$dir_name" = "." ]; then
+              dir_key="root"
+            else
+              dir_key="$dir_name"
             fi
             
-            # 检查是否有resource目录
-            pdf_dir=$(dirname "$pdf_file")
-            resource_exists=""
-            if [ -d "$pdf_dir/resource" ]; then
-              resource_exists=" (含resource资源)"
-            fi
-            
-            echo "- [$file_name]($rel_path) ($file_size)$resource_exists" >> pdf_output/README.md
+            dir_files["$dir_key"]="${dir_files["$dir_key"]}- [$file_name]($rel_path) ($file_size)\n"
           done
           
-          echo "" >> pdf_output/README.md
-          total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; 2>/dev/null | awk '{sum+=$1} END {print int(sum/1024/1024)}' || echo "0")
-          
-          # 统计有resource目录的PDF数量
-          resource_dirs_count=$(find pdf_output -type d -name "resource" 2>/dev/null | wc -l)
-          
-          echo "总计: $PDF_COUNT 个 PDF 文件, 总大小约 ${total_size_mb}MB, ${resource_dirs_count} 个目录包含resource资源" >> pdf_output/README.md
-      
-      - name: "Create zip archive for release"
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          TAG_NAME="${GITHUB_REF#refs/tags/}"
-          
-          cd pdf_output
-          zip -r "../pdf-documents-$TAG_NAME.zip" .
-          cd ..
+          # 输出目录和文件
+          for dir in "${!dir_files[@]}"; do
+            if [ "$dir" = "root" ]; then
+              echo "### 根目录" >> pdf_output/README.md
+            else
+              echo "### $dir/" >> pdf_output/README.md
+            fi
+            echo "" >> pdf_output/README.md
+            echo -e "${dir_files[$dir]}" >> pdf_output/README.md
+            echo "" >> pdf_output/README.md
+          done
       
       - name: "Upload PDF artifacts"
         uses: actions/upload-artifact@v4
@@ -548,19 +514,20 @@ jobs:
           name: pdf-documents
           path: |
             pdf_output/
-            pdf-documents-*.zip
+            conversion_logs/
           retention-days: 7
       
-      - name: "Create GitHub Release"
+      - name: "Create release if tagged"
         if: startsWith(github.ref, 'refs/tags/')
-        id: create_release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: "PDF Documents - ${{ github.ref_name }}"
-          body_path: pdf_output/README.md
-          files: |
-            pdf-documents-${{ github.ref_name }}.zip
-          draft: false
-          prerelease: false
-          generate_release_notes: true
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          
+          # 创建压缩包
+          cd pdf_output
+          zip -r "../pdf-documents-$TAG_NAME.zip" .
+          cd ..
+          
+          # 上传到release
+          gh release upload "$TAG_NAME" "pdf-documents-$TAG_NAME.zip" --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
