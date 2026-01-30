@@ -1,0 +1,650 @@
+name: "Markdown to PDF Converter with Tiled Watermark"
+
+on:
+  push:
+    branches: ["main", "master"]
+    tags: ["v*", "pdf-*"]
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  convert-md-to-pdf:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: "Install dependencies"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pandoc \
+            texlive-xetex \
+            texlive-latex-extra \
+            texlive-fonts-recommended \
+            texlive-latex-recommended \
+            texlive-lang-chinese \
+            texlive-science \
+            fonts-noto-cjk \
+            fonts-noto-cjk-extra \
+            fonts-wqy-microhei \
+            fonts-wqy-zenhei \
+            lmodern \
+            tree \
+            jq \
+            python3-pip
+          
+          pip3 install beautifulsoup4
+      
+      - name: "Create improved HTML to Markdown converter"
+        run: |
+          cat > convert_html.py << 'EOF'
+          import os
+          import re
+          import sys
+          
+          def convert_html_to_markdown(content, file_path):
+              """将HTML标签转换为Markdown格式，保持图片顺序"""
+              
+              # 首先处理图片和对应的center标签
+              center_img_pattern = re.compile(
+                  r'<center>\s*(.*?<img\s+[^>]+>.*?)\s*</center>',
+                  re.IGNORECASE | re.DOTALL
+              )
+              
+              def replace_center_img(match):
+                  inner_content = match.group(1).strip()
+                  
+                  # 提取img标签
+                  img_match = re.search(r'<img\s+([^>]+)>', inner_content)
+                  if img_match:
+                      attrs_str = img_match.group(1)
+                      
+                      # 提取属性
+                      src_match = re.search(r'src\s*=\s*["\']([^"\']+)["\']', attrs_str)
+                      alt_match = re.search(r'alt\s*=\s*["\']([^"\']*)["\']', attrs_str)
+                      
+                      src = src_match.group(1) if src_match else ''
+                      alt = alt_match.group(1) if alt_match else ''
+                      
+                      # 清理src路径
+                      if src:
+                          src = re.sub(r'^\./', '', src)
+                          src = re.sub(r'^/', '', src)
+                      
+                      # 返回Markdown图片格式，并添加换行确保正确显示
+                      return f'\n\n![{alt}]({src})\n\n'
+                  
+                  return inner_content
+              
+              content = center_img_pattern.sub(replace_center_img, content)
+              
+              # 单独处理剩余的img标签（不在center中的）
+              img_pattern = re.compile(r'<img\s+([^>]+)>', re.IGNORECASE)
+              
+              def replace_img_tag(match):
+                  attrs_str = match.group(1)
+                  
+                  src_match = re.search(r'src\s*=\s*["\']([^"\']+)["\']', attrs_str)
+                  alt_match = re.search(r'alt\s*=\s*["\']([^"\']*)["\']', attrs_str)
+                  
+                  src = src_match.group(1) if src_match else ''
+                  alt = alt_match.group(1) if alt_match else ''
+                  
+                  # 清理src路径
+                  if src:
+                      src = re.sub(r'^\./', '', src)
+                      src = re.sub(r'^/', '', src)
+                  
+                  # 返回Markdown图片格式，添加换行
+                  return f'\n\n![{alt}]({src})\n\n'
+              
+              content = img_pattern.sub(replace_img_tag, content)
+              
+              # 处理链接标签
+              link_pattern = re.compile(r'<a\s+([^>]+)>(.*?)</a>', re.IGNORECASE | re.DOTALL)
+              
+              def replace_link_tag(match):
+                  attrs_str = match.group(1)
+                  link_text = match.group(2).strip()
+                  
+                  href_match = re.search(r'href\s*=\s*["\']([^"\']+)["\']', attrs_str)
+                  if href_match:
+                      href = href_match.group(1)
+                      return f'[{link_text}]({href})'
+                  return link_text
+            
+              content = link_pattern.sub(replace_link_tag, content)
+              
+              # 移除剩余的HTML标签，保留内容
+              content = re.sub(r'<[^>]+>', '', content)
+              
+              # 清理多余的空白行
+              content = re.sub(r'\n\s*\n\s*\n', '\n\n', content)
+              
+              return content
+          
+          def process_markdown_file(filepath):
+              print(f"处理文件: {filepath}")
+              try:
+                  with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                      content = f.read()
+                  
+                  # 转换HTML为Markdown
+                  processed_content = convert_html_to_markdown(content, filepath)
+                  
+                  # 保存处理后的文件
+                  with open(filepath, 'w', encoding='utf-8') as f:
+                      f.write(processed_content)
+                      
+                  return True
+              except Exception as e:
+                  print(f"处理失败 {filepath}: {e}")
+                  import traceback
+                  traceback.print_exc()
+                  return False
+          
+          # 遍历所有Markdown文件
+          processed = 0
+          for root, dirs, files in os.walk('.'):
+              # 跳过特定目录
+              skip_dirs = ['.git', 'pdf_output', '__pycache__', '.github', 'node_modules']
+              dirs[:] = [d for d in dirs if d not in skip_dirs]
+              
+              for file in files:
+                  if file.endswith('.md'):
+                      filepath = os.path.join(root, file)
+                      if process_markdown_file(filepath):
+                          processed += 1
+          
+          print(f"处理完成: {processed} 个文件")
+          EOF
+          
+          python3 convert_html.py
+      
+      - name: "Find all markdown files"
+        run: |
+          echo "查找所有Markdown文件..."
+          # 查找所有.md文件，排除一些特定的目录
+          find . -type f -name "*.md" \
+            ! -path "./.git/*" \
+            ! -path "./pdf_output/*" \
+            ! -path "./node_modules/*" \
+            ! -path "./__pycache__/*" \
+            ! -name "README.md" \
+            ! -name "readme.md" \
+          > md_files.txt
+          
+          echo "找到的Markdown文件:"
+          cat md_files.txt
+          echo "总共找到 $(wc -l < md_files.txt) 个Markdown文件"
+      
+      - name: "Create improved LaTeX template for tables"
+        run: |
+          cat > header.tex << 'EOF'
+          \usepackage{xeCJK}
+          \usepackage[UTF8]{ctex}
+          \setCJKmainfont{Noto Serif CJK SC}
+          \setCJKsansfont{Noto Sans CJK SC}
+          \setCJKmonofont{Noto Sans Mono CJK SC}
+          
+          \usepackage[margin=1.2in]{geometry}
+          
+          \usepackage{hyperref}
+          \hypersetup{
+            colorlinks=true,
+            linkcolor=blue,
+            urlcolor=blue,
+            citecolor=blue,
+            pdfborder={0 0 0},
+          }
+          
+          \usepackage{listings}
+          \usepackage{xcolor}
+          \usepackage{graphicx}
+          \usepackage{float}
+          \usepackage{caption}
+          \usepackage[section]{placeins}
+          
+          \definecolor{codebg}{rgb}{0.98,0.98,0.98}
+          \definecolor{framecolor}{rgb}{0.8,0.8,0.8}
+          
+          \lstset{
+            basicstyle=\ttfamily\normalsize,
+            backgroundcolor=\color{codebg},
+            frame=single,
+            framesep=6pt,
+            framerule=0.8pt,
+            rulecolor=\color{framecolor},
+            breaklines=true,
+            breakatwhitespace=false,
+            breakautoindent=true,
+            breakindent=0pt,
+            postbreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\color{red}\hookrightarrow\space}},
+            showstringspaces=false,
+            tabsize=2,
+            numbers=none,
+            xleftmargin=12pt,
+            xrightmargin=12pt,
+            upquote=true,
+            columns=fullflexible,
+            keepspaces=true,
+          }
+          
+          \usepackage{parskip}
+          \setlength{\parindent}{0pt}
+          \setlength{\parskip}{0.8em}
+          
+          \sloppy
+          \emergencystretch=3em
+          
+          \usepackage{eso-pic}
+          \usepackage{tikz}
+          \usetikzlibrary{calc}
+          
+          \newcommand\BackgroundPicture{%
+            \begin{tikzpicture}[remember picture,overlay]
+              \coordinate (page center) at (current page.center);
+              \pgfmathsetmacro{\pagewidth}{\paperwidth}
+              \pgfmathsetmacro{\pageheight}{\paperheight}
+              
+              \pgfmathsetmacro{\hcount}{3}
+              \pgfmathsetmacro{\vcount}{5}
+              \pgfmathsetmacro{\hspace}{\paperwidth/(\hcount+1)}
+              \pgfmathsetmacro{\vspace}{\paperheight/(\vcount+1)}
+              
+              \foreach \i in {1,...,\hcount} {
+                \foreach \j in {1,...,\vcount} {
+                  \pgfmathsetmacro{\x}{-\paperwidth/2 + \i*\hspace}
+                  \pgfmathsetmacro{\y}{-\paperheight/2 + \j*\vspace}
+                  
+                  \node at ($(page center) + (\x pt, \y pt)$) [
+                    rotate=45,
+                    scale=1.5,
+                    text=gray!30,
+                    opacity=0.4,
+                    font=\sffamily\bfseries\small
+                  ] {emakefun};
+                }
+              }
+              
+              \node at (page center) [
+                rotate=45,
+                scale=3,
+                text=gray!30,
+                opacity=0.6,
+                font=\sffamily\bfseries
+              ] {emakefun};
+            \end{tikzpicture}%
+          }
+          
+          \AddToShipoutPictureBG{\BackgroundPicture}
+          
+          % 图片处理设置 - 确保图片位置正确
+          \graphicspath{{./}{./picture/}{./resource/}}
+          
+          % 设置图片最大宽度为行宽
+          \makeatletter
+          \def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+          \makeatother
+          
+          % 重新定义图片环境，确保图片位置固定，不自动生成标签
+          \let\oldincludegraphics\includegraphics
+          \renewcommand{\includegraphics}[2][]{%
+            \begin{figure}[H]
+              \centering
+              \oldincludegraphics[#1,width=\maxwidth,keepaspectratio]{#2}
+            \end{figure}%
+          }
+          
+          % 处理markdown中的图片引用，不自动生成标签
+          \usepackage{xparse}
+          \NewDocumentCommand{\mdimage}{m o}{%
+            \begin{figure}[H]
+              \centering
+              \IfValueTF{#2}{%
+                \includegraphics[width=#2\linewidth]{#1}%
+              }{%
+                \includegraphics[width=0.8\linewidth]{#1}%
+              }
+            \end{figure}%
+          }
+          
+          % 防止图片浮动到错误位置
+          \usepackage{float}
+          \floatplacement{figure}{H}
+          
+          % 确保图片按顺序出现
+          \usepackage{placeins}
+          \AtBeginDocument{%
+            \let\oldfigure\figure
+            \renewcommand{\figure}[1][H]{%
+              \oldfigure[#1]%
+              \centering
+            }%
+          }
+          
+          % 关闭章节标题在页眉的显示
+          \usepackage{fancyhdr}
+          \pagestyle{fancy}
+          \fancyhf{} % 清空所有页眉页脚
+          \fancyhead[L]{}
+          \fancyhead[C]{}
+          \fancyhead[R]{}
+          \fancyfoot[C]{\thepage} % 只在页脚居中显示页码
+          \renewcommand{\headrulewidth}{0pt} % 去掉页眉横线
+          \renewcommand{\footrulewidth}{0pt} % 去掉页脚横线
+          
+          % 防止章节标题在页眉重复出现
+          \renewcommand{\chaptermark}[1]{}
+          \renewcommand{\sectionmark}[1]{}
+          
+          % 设置标题格式
+          \usepackage{titlesec}
+          \titleformat{\chapter}[display]
+            {\normalfont\huge\bfseries\centering}
+            {\chaptertitlename\ \thechapter}
+            {20pt}
+            {\Huge}
+          
+          \titleformat{\section}
+            {\normalfont\Large\bfseries}
+            {\thesection}
+            {1em}
+            {}
+          
+          \titleformat{\subsection}
+            {\normalfont\large\bfseries}
+            {\thesubsection}
+            {1em}
+            {}
+          
+          % ========== 表格处理优化 ==========
+          \usepackage{tabularx}
+          \usepackage{booktabs}
+          \usepackage{multirow}
+          \usepackage{multicol}
+          \usepackage{makecell}
+          \usepackage{array}
+          \usepackage{longtable}
+          \usepackage{ltablex}
+          
+          % 设置表格字体大小和行距
+          \renewcommand{\arraystretch}{1.3}
+          
+          % 自定义表格列类型
+          \newcolumntype{L}{>{\raggedright\arraybackslash}X}
+          \newcolumntype{C}{>{\centering\arraybackslash}X}
+          \newcolumntype{R}{>{\raggedleft\arraybackslash}X}
+          
+          % 自动调整表格列宽
+          \newcolumntype{Y}{>{\centering\arraybackslash}p{\dimexpr.2\linewidth-2\tabcolsep}}
+          \newcolumntype{Z}{>{\centering\arraybackslash}p{\dimexpr.25\linewidth-2\tabcolsep}}
+          
+          % 设置表格边框
+          \usepackage{colortbl}
+          \arrayrulecolor{gray!50}
+          
+          % 处理表格内的图片
+          \newcommand{\tableimage}[2][0.9\linewidth]{%
+            \raisebox{-0.5\baselineskip}{\includegraphics[width=#1]{#2}}%
+          }
+          
+          % 优化表格跨页
+          \usepackage{supertabular}
+          
+          % 设置表格标题格式
+          \captionsetup[table]{justification=centering}
+          
+          % 重定义longtable环境，使其更适合复杂表格
+          \let\oldlongtable\longtable
+          \let\endoldlongtable\endlongtable
+          \renewenvironment{longtable}[1]
+            {\footnotesize\oldlongtable{#1}}
+            {\endoldlongtable}
+          
+          % 重定义tabular环境
+          \let\oldtabular\tabular
+          \let\endoldtabular\endtabular
+          \renewenvironment{tabular}[1]
+            {\footnotesize\begin{oldtabular}{#1}}
+            {\end{oldtabular}}
+          
+          % 处理表格中的换行
+          \newcommand{\specialcell}[2][c]{%
+            \begin{tabular}[#1]{@{}c@{}}#2\end{tabular}%
+          }
+          EOF
+      
+      - name: "Set up output directory"
+        run: |
+          mkdir -p pdf_output
+      
+      - name: "Convert Markdown to PDF with improved table handling"
+        run: |
+          # 读取文件列表
+          converted_count=0
+          failed_count=0
+          
+          while IFS= read -r md_file; do
+            [ -z "$md_file" ] && continue
+            
+            echo "========================================"
+            echo "处理文件: $md_file"
+            echo "========================================"
+            
+            # 获取目录和基本文件名
+            dir_name=$(dirname "$md_file")
+            base_name=$(basename "$md_file" .md)
+            
+            # 只创建PDF输出目录
+            mkdir -p "pdf_output/$dir_name"
+            
+            # 获取markdown文件所在目录
+            md_dir=$(dirname "$md_file")
+            
+            # 构建资源路径 - 包含多个可能的位置
+            resource_paths="$md_dir:$md_dir/picture:$md_dir/../picture:.:./picture:./resource"
+            
+            echo "资源路径: $resource_paths"
+            
+            set +e
+            
+            # 转换PDF - 使用优化的设置确保表格显示良好
+            echo "开始转换PDF..."
+            
+            pandoc "$md_file" \
+              --resource-path="$resource_paths" \
+              -o "pdf_output/$dir_name/$base_name.pdf" \
+              --pdf-engine=xelatex \
+              --listings \
+              --include-in-header=header.tex \
+              -V mainfont="Noto Serif CJK SC" \
+              -V sansfont="Noto Sans CJK SC" \
+              -V monofont="Noto Sans Mono CJK SC" \
+              -V geometry:margin=1.2in \
+              -V geometry:a4paper \
+              -V colorlinks=true \
+              -V linkcolor=blue \
+              -V urlcolor=blue \
+              --wrap=auto \
+              --highlight-style=tango \
+              -f markdown \
+              --top-level-division=chapter \
+              -M graphics:true \
+              -M placeins:true \
+              -M floatplacement:"figure:H,table:H" \
+              -M caption-justification=centered \
+              -V tables \
+              -V longtable \
+              -V booktabs \
+              --variable=linestretch:1.25 \
+              2>&1 | tee conversion.log
+              
+            conversion_status=$?
+            
+            set -e
+            
+            # 检查转换是否成功
+            if [ $conversion_status -eq 0 ] && [ -f "pdf_output/$dir_name/$base_name.pdf" ] && [ -s "pdf_output/$dir_name/$base_name.pdf" ]; then
+              echo "✓ 成功转换: $md_file"
+              converted_count=$((converted_count + 1))
+              
+              # 检查PDF文件大小
+              pdf_size=$(du -h "pdf_output/$dir_name/$base_name.pdf" | cut -f1)
+              echo "PDF文件大小: $pdf_size"
+            else
+              echo "✗ 转换失败: $md_file"
+              failed_count=$((failed_count + 1))
+              
+              if [ -f "conversion.log" ]; then
+                echo "转换日志:"
+                tail -50 conversion.log
+              fi
+            fi
+            
+            rm -f conversion.log 2>/dev/null || true
+            
+            echo ""
+          done < md_files.txt
+          
+          echo "========================================"
+          echo "转换汇总: $converted_count 成功, $failed_count 失败"
+          echo "========================================"
+          
+          if [ $converted_count -eq 0 ] && [ $failed_count -gt 0 ]; then
+            echo "所有转换都失败了!"
+            exit 1
+          fi
+          
+          # 清理临时文件
+          rm -f md_files.txt
+      
+      - name: "Copy resource directories to output"
+        run: |
+          echo "复制resource目录到输出目录..."
+          
+          # 查找所有有PDF文件的目录，复制对应的resource目录
+          find pdf_output -name "*.pdf" -type f | while read pdf_file; do
+            pdf_dir=$(dirname "$pdf_file")
+            rel_dir=${pdf_dir#pdf_output/}
+            
+            # 如果原始目录下有resource目录，则复制到输出目录
+            if [ -d "$rel_dir/resource" ]; then
+              echo "复制 $rel_dir/resource 到 $pdf_dir/"
+              cp -r "$rel_dir/resource" "$pdf_dir/" 2>/dev/null || echo "无法复制 $rel_dir/resource"
+            fi
+          done
+      
+      - name: "Verify PDF files"
+        run: |
+          total_pdfs=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
+          
+          if [ $total_pdfs -eq 0 ]; then
+            echo "没有生成PDF文件!"
+            exit 1
+          else
+            echo "总共生成 $total_pdfs 个PDF文件"
+            
+            # 显示总大小
+            total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; | awk '{sum+=$1} END {print int(sum/1024/1024)}')
+            echo "PDF文件总大小: ${total_size_mb}MB"
+          fi
+      
+      - name: "Create release documentation"
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+          else
+            TAG_NAME="latest"
+          fi
+          
+          echo "# PDF 文档集" > pdf_output/README.md
+          echo "" >> pdf_output/README.md
+          echo "生成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> pdf_output/README.md
+          echo "已优化HTML标签处理，图片位置正确" >> pdf_output/README.md
+          echo "代码块带边框，自动换行" >> pdf_output/README.md
+          echo "添加平铺式 'emakefun' 水印" >> pdf_output/README.md
+          echo "包含resource目录中的程序文件" >> pdf_output/README.md
+          echo "优化：去除了页眉章节标题重复，修复了图片标签重复问题" >> pdf_output/README.md
+          echo "优化：改进了表格显示，支持复杂表格和表格内图片" >> pdf_output/README.md
+          echo "" >> pdf_output/README.md
+          
+          echo "## 文件列表" >> pdf_output/README.md
+          echo "" >> pdf_output/README.md
+          
+          PDF_COUNT=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
+          
+          current_dir=""
+          find pdf_output -name "*.pdf" -type f | sort | while read pdf_file; do
+            rel_path=${pdf_file#pdf_output/}
+            dir_name=$(dirname "$rel_path")
+            file_name=$(basename "$rel_path")
+            file_size=$(du -h "$pdf_file" | cut -f1)
+            
+            if [ "$current_dir" != "$dir_name" ]; then
+              current_dir="$dir_name"
+              if [ "$dir_name" != "." ]; then
+                echo "### $dir_name/" >> pdf_output/README.md
+                echo "" >> pdf_output/README.md
+              fi
+            fi
+            
+            # 检查是否有resource目录
+            pdf_dir=$(dirname "$pdf_file")
+            resource_exists=""
+            if [ -d "$pdf_dir/resource" ]; then
+              resource_exists=" (含resource资源)"
+            fi
+            
+            echo "- [$file_name]($rel_path) ($file_size)$resource_exists" >> pdf_output/README.md
+          done
+          
+          echo "" >> pdf_output/README.md
+          total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; | awk '{sum+=$1} END {print int(sum/1024/1024)}')
+          
+          # 统计有resource目录的PDF数量
+          resource_dirs_count=$(find pdf_output -type d -name "resource" 2>/dev/null | wc -l)
+          
+          echo "总计: $PDF_COUNT 个 PDF 文件, 总大小约 ${total_size_mb}MB, ${resource_dirs_count} 个目录包含resource资源" >> pdf_output/README.md
+      
+      - name: "Create zip archive for release"
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          
+          cd pdf_output
+          zip -r "../pdf-documents-$TAG_NAME.zip" .
+          cd ..
+      
+      - name: "Upload PDF artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-documents
+          path: |
+            pdf_output/
+            pdf-documents-*.zip
+          retention-days: 7
+      
+      - name: "Create GitHub Release"
+        if: startsWith(github.ref, 'refs/tags/')
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "PDF Documents - ${{ github.ref_name }}"
+          body_path: pdf_output/README.md
+          files: |
+            pdf-documents-${{ github.ref_name }}.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
