@@ -503,9 +503,9 @@ jobs:
             \endgroup
           }
           
-          % 防止生成目录
+          % 防止生成目录 - 完全禁用
           \usepackage{titletoc}
-          \setcounter{tocdepth}{-1}
+          \setcounter{tocdepth}{-10} % 设置为负值确保不生成目录
           
           % Pandoc过滤器：处理引用块
           \usepackage{fvextra}
@@ -602,7 +602,7 @@ jobs:
             # 转换PDF - 使用增强设置
             echo "开始转换PDF..."
             
-            # 构建Pandoc命令
+            # 构建Pandoc命令 - 注意移除了 --toc-depth=0 参数
             pandoc "$md_file" \
               --resource-path="$resource_paths" \
               -o "pdf_output/$dir_name/$base_name.pdf" \
@@ -622,7 +622,6 @@ jobs:
               --highlight-style=tango \
               -f markdown \
               -M date="$CURRENT_DATE" \
-              --toc-depth=0 \  # 不生成目录
               2>&1 | tee conversion.log
               
             conversion_status=$?
@@ -714,7 +713,7 @@ jobs:
           echo "11. 保护特定格式URL链接，防止丢失" >> pdf_output/README.md
           echo "12. 修复水平线显示过短问题" >> pdf_output/README.md
           echo "13. 不输出picture文件夹，只保留resource文件夹" >> pdf_output/README.md
-          echo "14. 不生成目录" >> pdf_output/README.md
+          echo "14. 不生成目录（通过LaTeX模板实现）" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
