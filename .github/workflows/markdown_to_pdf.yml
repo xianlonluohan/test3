@@ -74,9 +74,19 @@ jobs:
               inline_pattern = re.compile(r'`[^`\n]+`')
               protected_content = inline_pattern.sub(replace_inline_code, protected_content)
               
-              return protected_content, code_blocks, inline_code_blocks
+              # 保护引用块（> 开头的内容）
+              quote_blocks = []
+              def replace_quote_block(match):
+                  quote_blocks.append(match.group(0))
+                  return f"@@@QUOTE_BLOCK_{len(quote_blocks)-1}@@@"
+              
+              # 匹配引用块，以 > 开头，直到遇到空行或非引用行
+              quote_pattern = re.compile(r'^(?:>.*\n?)+', re.MULTILINE)
+              protected_content = quote_pattern.sub(replace_quote_block, protected_content)
+              
+              return protected_content, code_blocks, inline_code_blocks, quote_blocks
           
-          def restore_code_blocks(content, code_blocks, inline_code_blocks):
+          def restore_code_blocks(content, code_blocks, inline_code_blocks, quote_blocks):
               """恢复保护的代码块"""
               restored_content = content
               
@@ -90,15 +100,20 @@ jobs:
                   placeholder = f"@@@INLINE_CODE_{i}@@@"
                   restored_content = restored_content.replace(placeholder, inline_code)
               
+              # 恢复引用块
+              for i, quote_block in enumerate(quote_blocks):
+                  placeholder = f"@@@QUOTE_BLOCK_{i}@@@"
+                  restored_content = restored_content.replace(placeholder, quote_block)
+              
               return restored_content
           
           def process_images_in_content(content):
-              """处理内容中的图片，确保表格内图片不受影响，去除图片标签"""
+              """处理内容中的图片，确保表格内图片不受影响"""
               lines = content.split('\n')
               processed_lines = []
               in_table = False
               
-              for i, line in enumerate(lines):
+              for line in lines:
                   # 检查是否在表格中
                   if line.strip().startswith('|') and '|' in line[1:]:
                       in_table = True
@@ -112,19 +127,13 @@ jobs:
                       processed_lines.append(line)
                   else:
                       # 非表格内容处理图片
-                      # 先检查是否是图片标签行（如"图1："）
-                      if re.match(r'^(图\d+:|图：|图\s*\d+\s*:|<center>图\d+:.*?</center>|<center>图：.*?</center>|<center>图\s*\d+\s*:.*?</center>)', line.strip()):
-                          # 跳过图片标签行
-                          continue
-                      
-                      # 处理图片
                       processed_line = process_non_table_images(line)
                       processed_lines.append(processed_line)
               
               return '\n'.join(processed_lines)
           
           def process_non_table_images(line):
-              """处理非表格内的图片"""
+              """处理非表格内的图片，移除图片标签和宽度标记"""
               # 处理HTML格式的图片 <img src="..." alt="..." width="...">
               img_pattern = re.compile(r'<img\s+([^>]+)>', re.IGNORECASE)
               
@@ -134,18 +143,16 @@ jobs:
                   # 提取属性
                   src_match = re.search(r'src\s*=\s*["\']([^"\']+)["\']', attrs_str)
                   alt_match = re.search(r'alt\s*=\s*["\']([^"\']*)["\']', attrs_str)
-                  width_match = re.search(r'width\s*=\s*["\']([^"\']+)["\']', attrs_str)
                   
                   src = src_match.group(1) if src_match else ''
                   alt = alt_match.group(1) if alt_match else ''
-                  width = width_match.group(1) if width_match else ''
                   
                   # 清理src路径
                   if src:
                       src = re.sub(r'^\./', '', src)
                       src = re.sub(r'^/', '', src)
                   
-                  # 构建Markdown图片，添加换行确保独立段落，但不包含width标记
+                  # 构建Markdown图片，添加换行确保独立段落
                   return f'\n![{alt}]({src})\n'
               
               # 先处理HTML格式图片
@@ -162,41 +169,34 @@ jobs:
               
               line = md_img_pattern.sub(ensure_img_newlines, line)
               
-              # 移除{width=...}标记
-              line = re.sub(r'\{width=[^\}]+\}', '', line)
-              
-              # 移除<center>标签
-              line = re.sub(r'<center>', '', line, flags=re.IGNORECASE)
-              line = re.sub(r'</center>', '', line, flags=re.IGNORECASE)
+              # 移除图片后的宽度标记 {width=...}
+              line = re.sub(r'\s*\{width=[^}]+\}', '', line)
               
               return line
           
-          def process_quotes(content):
-              """处理引用块，在每行前加>"""
+          def remove_image_labels(content):
+              """移除图片下方的标签文本，如'图1: alt text'等"""
               lines = content.split('\n')
               processed_lines = []
-              in_code_block = False
+              skip_next_if_label = False
               
               for i, line in enumerate(lines):
-                  # 跳过代码块
-                  if line.strip().startswith('```'):
-                      in_code_block = not in_code_block
-                      processed_lines.append(line)
-                      continue
+                  # 如果上一行是图片，且这一行是图片标签，则跳过
+                  if skip_next_if_label:
+                      if re.match(r'^(图\d*:|图片\d*:|图\s*\d+\s*:|<center>图\d*:</center>)', line.strip()):
+                          skip_next_if_label = False
+                          continue
+                      else:
+                          skip_next_if_label = False
                   
-                  if in_code_block:
+                  # 检查是否是图片行
+                  if re.search(r'!\[.*\]\(.*\)', line):
                       processed_lines.append(line)
-                      continue
-                  
-                  # 处理普通文本
-                  if line.strip().startswith('>'):
-                      # 已经是引用块，保持原样
-                      processed_lines.append(line)
-                  elif re.match(r'^注意：', line.strip()):
-                      # 以"注意："开头的行转换为引用块
-                      processed_lines.append('> ' + line)
+                      skip_next_if_label = True
                   else:
-                      processed_lines.append(line)
+                      # 移除单独的图片标签行
+                      if not re.match(r'^(图\d*:|图片\d*:|图\s*\d+\s*:|<center>图\d*:</center>)', line.strip()):
+                          processed_lines.append(line)
               
               return '\n'.join(processed_lines)
           
@@ -206,14 +206,14 @@ jobs:
                   with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                       content = f.read()
                   
-                  # 1. 保护代码块
-                  protected_content, code_blocks, inline_code_blocks = protect_code_blocks(content)
+                  # 1. 保护代码块、内联代码和引用块
+                  protected_content, code_blocks, inline_code_blocks, quote_blocks = protect_code_blocks(content)
                   
-                  # 2. 处理非表格内的图片，确保正确位置，去除图片标签
+                  # 2. 处理非表格内的图片，确保正确位置
                   processed_content = process_images_in_content(protected_content)
                   
-                  # 3. 处理引用块
-                  processed_content = process_quotes(processed_content)
+                  # 3. 移除图片标签
+                  processed_content = remove_image_labels(processed_content)
                   
                   # 4. 处理链接标签（不处理代码块中的）
                   link_pattern = re.compile(r'<a\s+([^>]+)>(.*?)</a>', re.IGNORECASE | re.DOTALL)
@@ -232,25 +232,13 @@ jobs:
                   
                   # 5. 移除其他HTML标签（不处理代码块中的）
                   # 小心处理，避免移除代码中的<>
-                  processed_content = re.sub(r'<(?!@@@CODE_BLOCK_|@@@INLINE_CODE_)(?!\/?code>)(?!\/?pre>)(?!\/?span>)(?!\/?div>)(?!\/?p>)(?!\/?br>)[^>]+>', '', processed_content)
+                  processed_content = re.sub(r'<(?!@@@CODE_BLOCK_|@@@INLINE_CODE_|@@@QUOTE_BLOCK_)(?!\/?code>)(?!\/?pre>)(?!\/?span>)(?!\/?div>)(?!\/?p>)(?!\/?br>)[^>]+>', '', processed_content)
                   
                   # 6. 恢复代码块
-                  final_content = restore_code_blocks(processed_content, code_blocks, inline_code_blocks)
+                  final_content = restore_code_blocks(processed_content, code_blocks, inline_code_blocks, quote_blocks)
                   
-                  # 7. 再次处理图片相关的多余空行
-                  lines = final_content.split('\n')
-                  cleaned_lines = []
-                  for i, line in enumerate(lines):
-                      # 跳过空行，但保留代码块内的空行
-                      if line.strip() == '' and i > 0 and i < len(lines) - 1:
-                          prev_line = lines[i-1].strip()
-                          next_line = lines[i+1].strip()
-                          # 如果前后都是空行或图片，则跳过这个空行
-                          if prev_line == '' or next_line == '' or prev_line.startswith('![') or next_line.startswith('!['):
-                              continue
-                      cleaned_lines.append(line)
-                  
-                  final_content = '\n'.join(cleaned_lines)
+                  # 7. 移除<center>标签
+                  final_content = re.sub(r'</?center>', '', final_content, flags=re.IGNORECASE)
                   
                   # 保存处理后的文件
                   with open(filepath, 'w', encoding='utf-8') as f:
@@ -306,33 +294,39 @@ jobs:
           \usepackage{graphicx}
           \usepackage{float}
           \usepackage{placeins} % 用于控制浮动体位置
-          \usepackage{tcolorbox}
-          \tcbuselibrary{breakable, skins}
+          \usepackage{mdframed} % 用于创建带背景的引用块
           
           \definecolor{codebg}{rgb}{0.98,0.98,0.98}
           \definecolor{framecolor}{rgb}{0.8,0.8,0.8}
-          \definecolor{quotebg}{rgb}{0.95,0.95,0.97}
-          \definecolor{quoteframe}{rgb}{0.7,0.7,0.9}
+          \definecolor{quotebg}{rgb}{0.97,0.97,0.97}
+          \definecolor{quoteframe}{rgb}{0.85,0.85,0.85}
           
-          % 引用块样式
-          \newenvironment{quoteblock}{%
-            \begin{tcolorbox}[
-              colback=quotebg,
-              colframe=quoteframe,
-              boxrule=0.8pt,
-              arc=3pt,
-              left=6pt,
-              right=6pt,
-              top=4pt,
-              bottom=4pt,
-              breakable,
-              enhanced
-            ]
-          }{%
-            \end{tcolorbox}
+          % 代码块设置
+          \lstset{
+            basicstyle=\ttfamily\footnotesize, % 使用更小的字号
+            backgroundcolor=\color{codebg},
+            frame=single,
+            framesep=6pt,
+            framerule=0.8pt,
+            rulecolor=\color{framecolor},
+            breaklines=true,
+            breakatwhitespace=true,
+            breakautoindent=true,
+            breakindent=20pt, % 增加缩进以便更好显示换行
+            postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
+            showstringspaces=false,
+            tabsize=2,
+            numbers=none,
+            xleftmargin=12pt,
+            xrightmargin=12pt,
+            upquote=true,
+            columns=fullflexible,
+            keepspaces=true,
+            escapeinside={(*@}{@*)}, % 允许在代码块中插入LaTeX命令
           }
           
-          \lstset{
+          % 特殊处理text代码块
+          \lstdefinestyle{textstyle}{
             basicstyle=\ttfamily\footnotesize,
             backgroundcolor=\color{codebg},
             frame=single,
@@ -343,8 +337,7 @@ jobs:
             breakatwhitespace=true,
             breakautoindent=true,
             breakindent=20pt,
-            prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookleftarrow}},
-            postbreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\color{red}\hookrightarrow\space}},
+            postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
             showstringspaces=false,
             tabsize=2,
             numbers=none,
@@ -353,11 +346,24 @@ jobs:
             upquote=true,
             columns=fullflexible,
             keepspaces=true,
-            escapeinside={(*@}{@*)},
-            % 针对text代码块的特殊设置
-            alsoletter={.},
-            literate={*}{{*}}1 {/}{{/}}1
+            escapeinside={},
           }
+          
+          % 引用块设置
+          \newmdenv[
+            backgroundcolor=quotebg,
+            linecolor=quoteframe,
+            linewidth=1pt,
+            roundcorner=5pt,
+            innerleftmargin=12pt,
+            innerrightmargin=12pt,
+            innertopmargin=8pt,
+            innerbottommargin=8pt,
+            skipabove=6pt,
+            skipbelow=6pt,
+            frametitleaboveskip=6pt,
+            frametitlebelowskip=6pt
+          ]{quotebox}
           
           % 设置图片浮动参数，确保图片在正确位置
           \usepackage{float}
@@ -413,7 +419,7 @@ jobs:
           \AddToShipoutPictureBG{\BackgroundPicture}
           
           % 图片处理设置
-          \graphicspath{{./}{./picture/}{./resource/}}
+          \graphicspath{{./}{./resource/}}
           
           % 设置图片最大宽度为行宽，并居中
           \makeatletter
@@ -432,44 +438,43 @@ jobs:
           \usepackage{titletoc}
           \setcounter{tocdepth}{-1}
           
-          % 处理Markdown中的引用块
-          \usepackage{framed}
-          \definecolor{shadecolor}{rgb}{0.95,0.95,0.97}
+          % Pandoc过滤器：处理引用块
+          \usepackage{fvextra}
+          \usepackage{csquotes}
           
-          % 重定义quote环境为带背景色的框
-          \renewenvironment{quote}{%
-            \begin{quoteblock}
-          }{%
-            \end{quoteblock}
+          % 自定义Markdown到LaTeX的转换
+          \newcommand{\quoteblock}[1]{%
+            \begin{quotebox}
+            #1
+            \end{quotebox}
           }
+          EOF
+      
+      - name: "Create Pandoc filter for quotes"
+        run: |
+          cat > quote-filter.lua << 'EOF'
+          function Block(el)
+            -- 处理引用块
+            if el.t == "BlockQuote" then
+              local content = ""
+              for i, item in ipairs(el.content) do
+                content = content .. pandoc.write(pandoc.Pandoc({item}), "latex")
+              end
+              return pandoc.RawBlock('latex', '\\begin{quotebox}\n' .. content .. '\\end{quotebox}')
+            end
+            return el
+          end
           
-          % 处理文本代码块（text）
-          \lstdefinestyle{textstyle}{
-            basicstyle=\ttfamily\footnotesize,
-            backgroundcolor=\color{codebg},
-            frame=single,
-            framesep=6pt,
-            framerule=0.8pt,
-            rulecolor=\color{framecolor},
-            breaklines=true,
-            breakatwhitespace=true,
-            breakautoindent=true,
-            breakindent=20pt,
-            prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookleftarrow}},
-            postbreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\color{red}\hookrightarrow\space}},
-            showstringspaces=false,
-            tabsize=2,
-            numbers=none,
-            xleftmargin=12pt,
-            xrightmargin=12pt,
-            upquote=true,
-            columns=fullflexible,
-            keepspaces=true
-          }
-          
-          % 自定义Pandoc过滤器，处理特定格式
-          \usepackage{fancyvrb}
-          \newcommand{\verbatimfont}[1]{\renewcommand{\verbatim@font}{\ttfamily#1}}
+          function CodeBlock(el)
+            -- 处理代码块，如果是text类型则使用特殊样式
+            if el.classes[1] == "text" then
+              return pandoc.RawBlock('latex', 
+                '\\begin{lstlisting}[style=textstyle]\n' .. 
+                el.text .. 
+                '\n\\end{lstlisting}')
+            end
+            return el
+          end
           EOF
       
       - name: "Set up output directory"
@@ -502,23 +507,32 @@ jobs:
             # 获取markdown文件所在目录
             md_dir=$(dirname "$md_file")
             
-            # 构建资源路径 - 不包含picture目录
-            resource_paths="$md_dir:$md_dir/../picture:.:./picture:./resource"
+            # 构建资源路径 - 注意：不包含picture目录
+            resource_paths="$md_dir:$md_dir/../resource:.:./resource"
             
             echo "资源路径: $resource_paths"
+            
+            # 检查markdown文件中提到的图片
+            echo "检查图片引用..."
+            if [ -f "$md_file" ]; then
+              grep -n '!\[.*\](.*)' "$md_file" | head -5 | while read img_line; do
+                echo "  找到图片引用: $img_line"
+              done || true
+            fi
             
             set +e
             
             # 转换PDF - 使用增强设置
             echo "开始转换PDF..."
             
-            # 构建Pandoc命令，修复参数错误
+            # 构建Pandoc命令
             pandoc "$md_file" \
               --resource-path="$resource_paths" \
               -o "pdf_output/$dir_name/$base_name.pdf" \
               --pdf-engine=xelatex \
               --listings \
               --include-in-header=header.tex \
+              --lua-filter=quote-filter.lua \
               -V mainfont="Noto Serif CJK SC" \
               -V sansfont="Noto Sans CJK SC" \
               -V monofont="Noto Sans Mono CJK SC" \
@@ -531,7 +545,6 @@ jobs:
               --highlight-style=tango \
               -f markdown \
               -M date="$CURRENT_DATE" \
-              --shift-heading-level-by=0 \
               2>&1 | tee conversion.log
               
             conversion_status=$?
@@ -570,7 +583,7 @@ jobs:
             exit 1
           fi
       
-      - name: "Copy resource directories to output"
+      - name: "Copy resource directories to output (excluding picture)"
         run: |
           echo "复制resource目录到输出目录..."
           
@@ -618,14 +631,14 @@ jobs:
           echo "已优化功能：" >> pdf_output/README.md
           echo "1. 保护代码块内容，避免<>被移除" >> pdf_output/README.md
           echo "2. 图片位置固定，避免浮动错位" >> pdf_output/README.md
-          echo "3. 移除图片标签文本（图x:）和{width=...}标记" >> pdf_output/README.md
-          echo "4. 表格内图片保持原样显示" >> pdf_output/README.md
-          echo "5. 代码块自动换行，带边框" >> pdf_output/README.md
-          echo "6. 引用块添加底色框" >> pdf_output/README.md
-          echo "7. text文本框正确换行" >> pdf_output/README.md
-          echo "8. 添加平铺式 'emakefun' 水印" >> pdf_output/README.md
-          echo "9. 不生成目录" >> pdf_output/README.md
-          echo "10. 只输出resource目录，不输出picture目录" >> pdf_output/README.md
+          echo "3. 表格内图片保持原样显示" >> pdf_output/README.md
+          echo "4. 代码块自动换行，带边框" >> pdf_output/README.md
+          echo "5. 添加平铺式 'emakefun' 水印" >> pdf_output/README.md
+          echo "6. 移除图片标签（图x:）" >> pdf_output/README.md
+          echo "7. 移除多余宽度标记" >> pdf_output/README.md
+          echo "8. 为引用块添加底色框" >> pdf_output/README.md
+          echo "9. 修复text文本框换行" >> pdf_output/README.md
+          echo "10. 不输出picture文件夹，只保留resource文件夹" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
