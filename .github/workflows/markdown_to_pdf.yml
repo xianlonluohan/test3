@@ -643,7 +643,7 @@ jobs:
             # 转换PDF - 使用增强设置
             echo "开始转换PDF..."
             
-            # 构建Pandoc命令
+            # 构建Pandoc命令 - 移除了--table-of-contents=false参数
             pandoc "$md_file" \
               --resource-path="$resource_paths" \
               -o "pdf_output/$dir_name/$base_name.pdf" \
@@ -663,7 +663,6 @@ jobs:
               --highlight-style=tango \
               -f markdown+hard_line_breaks \
               -M date="$CURRENT_DATE" \
-              --table-of-contents=false \
               2>&1 | tee conversion.log
               
             conversion_status=$?
@@ -761,7 +760,7 @@ jobs:
           echo "11. ✅ 移除多余宽度标记" >> pdf_output/README.md
           echo "12. ✅ 为引用块添加底色框" >> pdf_output/README.md
           echo "13. ✅ 不输出picture文件夹，只保留resource文件夹" >> pdf_output/README.md
-          echo "14. ✅ 不生成目录" >> pdf_output/README.md
+          echo "14. ✅ 不生成目录（默认不生成）" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
