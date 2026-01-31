@@ -1,4 +1,4 @@
-name: "Enhanced Markdown to PDF Converter with Fixed Issues"
+name: "Enhanced Markdown to PDF Converter with Issues Fixed"
 
 on:
   push:
@@ -51,6 +51,40 @@ jobs:
           import re
           import sys
           
+          def protect_special_characters(content):
+              """保护特殊字符，如~，防止被LaTeX错误解析"""
+              # 保护代码块和内联代码中的特殊字符
+              lines = content.split('\n')
+              processed_lines = []
+              in_code_block = False
+              in_inline_code = False
+              
+              for line in lines:
+                  # 检测代码块开始/结束
+                  if line.strip().startswith('```'):
+                      in_code_block = not in_code_block
+                      processed_lines.append(line)
+                      continue
+                      
+                  # 检测内联代码
+                  if '`' in line:
+                      # 简单处理内联代码中的特殊字符
+                      parts = line.split('`')
+                      for i, part in enumerate(parts):
+                          if i % 2 == 1:  # 内联代码部分
+                              # 保护特殊字符
+                              part = part.replace('~', '\\textasciitilde{}')
+                              parts[i] = part
+                      line = '`'.join(parts)
+                  
+                  # 在代码块中保护特殊字符
+                  if in_code_block:
+                      line = line.replace('~', '\\textasciitilde{}')
+                  
+                  processed_lines.append(line)
+              
+              return '\n'.join(processed_lines)
+          
           def protect_code_blocks(content):
               """保护代码块，防止被HTML转换处理"""
               code_blocks = []
@@ -84,30 +118,10 @@ jobs:
               quote_pattern = re.compile(r'^(?:>.*\n?)+', re.MULTILINE)
               protected_content = quote_pattern.sub(replace_quote_block, protected_content)
               
-              # 保护特定数字模式，防止被错误格式化（如0100）
-              number_patterns = []
-              def protect_number_pattern(match):
-                  number_patterns.append(match.group(0))
-                  return f"@@@NUMBER_PATTERN_{len(number_patterns)-1}@@@"
-              
-              # 保护像(0100)这样的模式
-              number_regex = re.compile(r'\(0[0-9]{3}\)')
-              protected_content = number_regex.sub(protect_number_pattern, protected_content)
-              
-              # 保护链接文本，特别是那些看起来像HTML标签的链接
-              link_texts = []
-              def protect_link_text(match):
-                  link_texts.append(match.group(0))
-                  return f"@@@LINK_TEXT_{len(link_texts)-1}@@@"
-              
-              # 保护类似<https://...>的链接文本
-              link_pattern = re.compile(r'<https?://[^>]+>')
-              protected_content = link_pattern.sub(protect_link_text, protected_content)
-              
-              return protected_content, code_blocks, inline_code_blocks, quote_blocks, number_patterns, link_texts
+              return protected_content, code_blocks, inline_code_blocks, quote_blocks
           
-          def restore_protected_content(content, code_blocks, inline_code_blocks, quote_blocks, number_patterns, link_texts):
-              """恢复所有保护的内容"""
+          def restore_code_blocks(content, code_blocks, inline_code_blocks, quote_blocks):
+              """恢复保护的代码块"""
               restored_content = content
               
               # 恢复代码块
@@ -125,16 +139,6 @@ jobs:
                   placeholder = f"@@@QUOTE_BLOCK_{i}@@@"
                   restored_content = restored_content.replace(placeholder, quote_block)
               
-              # 恢复数字模式
-              for i, number_pattern in enumerate(number_patterns):
-                  placeholder = f"@@@NUMBER_PATTERN_{i}@@@"
-                  restored_content = restored_content.replace(placeholder, number_pattern)
-              
-              # 恢复链接文本
-              for i, link_text in enumerate(link_texts):
-                  placeholder = f"@@@LINK_TEXT_{i}@@@"
-                  restored_content = restored_content.replace(placeholder, link_text)
-              
               return restored_content
           
           def process_images_in_content(content):
@@ -142,36 +146,25 @@ jobs:
               lines = content.split('\n')
               processed_lines = []
               in_table = False
-              table_rows = []
               
               for line in lines:
-                  # 检查是否在表格中（表格行以|开头并包含|）
-                  if re.match(r'^\|.*\|.*$', line.strip()):
+                  # 检查是否在表格中
+                  if line.strip().startswith('|') and '|' in line[1:]:
                       in_table = True
-                      table_rows.append(line)
-                  elif line.strip() == '' and in_table:
-                      # 表格结束，处理表格内容
-                      processed_lines.extend(process_table_content(table_rows))
-                      table_rows = []
+                      # 表格内的图片保持原样
+                      processed_lines.append(line)
+                  elif line.strip() == '':
                       in_table = False
                       processed_lines.append(line)
                   elif in_table:
-                      # 仍在表格中，收集行
-                      table_rows.append(line)
+                      # 表格内的内容保持不变
+                      processed_lines.append(line)
                   else:
                       # 非表格内容处理图片
                       processed_line = process_non_table_images(line)
                       processed_lines.append(processed_line)
               
-              # 处理最后一个表格（如果存在）
-              if table_rows:
-                  processed_lines.extend(process_table_content(table_rows))
-              
               return '\n'.join(processed_lines)
-          
-          def process_table_content(table_rows):
-              """处理表格内容，保持原样不修改图片"""
-              return table_rows
           
           def process_non_table_images(line):
               """处理非表格内的图片，移除图片标签和宽度标记"""
@@ -219,39 +212,47 @@ jobs:
               """移除图片下方的标签文本，如'图1: alt text'等"""
               lines = content.split('\n')
               processed_lines = []
-              
               i = 0
+              
               while i < len(lines):
                   line = lines[i]
                   
                   # 检查是否是图片行
                   if re.search(r'!\[.*\]\(.*\)', line):
                       processed_lines.append(line)
-                      
-                      # 跳过后续的图片标签行
-                      j = i + 1
-                      while j < len(lines):
-                          next_line = lines[j]
-                          # 检查是否是图片标签（多种格式）
-                          if re.match(r'^(图\d*:|图片\d*:|图\s*\d+\s*:|<center>图\d*:</center>|图\d*\s*-|图\s*\d+\s*-)', next_line.strip()):
-                              j += 1
+                      # 检查下一行是否是图片标签
+                      if i + 1 < len(lines):
+                          next_line = lines[i + 1].strip()
+                          # 匹配常见的图片标签格式
+                          if re.match(r'^(图\d*:|图片\d*:|图\s*\d+\s*:|<center>图\d*:</center>)', next_line):
+                              i += 1  # 跳过标签行
+                              # 如果是表格内的图片，则保留标签
+                              if i < len(lines) and lines[i].strip().startswith('|'):
+                                  processed_lines.append(lines[i])
                           else:
-                              break
-                      
-                      i = j
+                              # 如果不是标签，保留原行
+                              if i + 1 < len(lines):
+                                  processed_lines.append(lines[i + 1])
+                              i += 1
+                      i += 1
                   else:
-                      # 移除独立的图片标签行（不在图片后面的）
-                      if not re.match(r'^(图\d*:|图片\d*:|图\s*\d+\s*:|<center>图\d*:</center>|图\d*\s*-|图\s*\d+\s*-)', line.strip()):
-                          processed_lines.append(line)
+                      # 如果不是图片行，直接添加
+                      processed_lines.append(line)
                       i += 1
               
               return '\n'.join(processed_lines)
           
-          def fix_horizontal_rules(content):
-              """修复水平线，确保---转换为正确的横线"""
-              # 将---替换为更长的横线表示
-              content = re.sub(r'^---\s*$', '---', content, flags=re.MULTILINE)
-              return content
+          def protect_specific_urls(content):
+              """保护特定格式的URL，防止被误处理"""
+              # 保护类似 <https://...> 格式的URL
+              url_pattern = re.compile(r'<https?://[^>]+>')
+              
+              def protect_url(match):
+                  url = match.group(0)
+                  # 转换为普通文本，避免被当作HTML标签
+                  return f'`{url}`'
+              
+              return url_pattern.sub(protect_url, content)
           
           def process_markdown_file(filepath):
               print(f"处理文件: {filepath}")
@@ -259,17 +260,20 @@ jobs:
                   with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                       content = f.read()
                   
-                  # 1. 保护代码块、内联代码、引用块、数字模式和链接文本
-                  protected_content, code_blocks, inline_code_blocks, quote_blocks, number_patterns, link_texts = protect_code_blocks(content)
+                  # 0. 保护特殊字符
+                  content = protect_special_characters(content)
                   
-                  # 2. 处理非表格内的图片，确保正确位置
+                  # 1. 保护特定格式的URL
+                  content = protect_specific_urls(content)
+                  
+                  # 2. 保护代码块、内联代码和引用块
+                  protected_content, code_blocks, inline_code_blocks, quote_blocks = protect_code_blocks(content)
+                  
+                  # 3. 处理非表格内的图片，确保正确位置
                   processed_content = process_images_in_content(protected_content)
                   
-                  # 3. 移除图片标签
+                  # 4. 移除图片标签
                   processed_content = remove_image_labels(processed_content)
-                  
-                  # 4. 修复水平线
-                  processed_content = fix_horizontal_rules(processed_content)
                   
                   # 5. 处理链接标签（不处理代码块中的）
                   link_pattern = re.compile(r'<a\s+([^>]+)>(.*?)</a>', re.IGNORECASE | re.DOTALL)
@@ -286,29 +290,12 @@ jobs:
                   
                   processed_content = link_pattern.sub(replace_link_tag, processed_content)
                   
-                  # 6. 移除其他HTML标签（不处理保护的内容）
-                  # 保留保护标记周围的HTML标签
-                  protected_pattern = re.compile(r'@@@(CODE_BLOCK_|INLINE_CODE_|QUOTE_BLOCK_|NUMBER_PATTERN_|LINK_TEXT_)\d+@@@')
+                  # 6. 移除其他HTML标签（不处理代码块中的）
+                  # 小心处理，避免移除代码中的<>
+                  processed_content = re.sub(r'<(?!@@@CODE_BLOCK_|@@@INLINE_CODE_|@@@QUOTE_BLOCK_)(?!\/?code>)(?!\/?pre>)(?!\/?span>)(?!\/?div>)(?!\/?p>)(?!\/?br>)[^>]+>', '', processed_content)
                   
-                  # 分步处理：先分割内容，然后分别处理非保护部分
-                  parts = protected_pattern.split(processed_content)
-                  if len(parts) > 1:
-                      # 有保护内容的情况
-                      final_parts = []
-                      for part in parts:
-                          if protected_pattern.match(f'@@@{part}@@@'):
-                              final_parts.append(f'@@@{part}@@@')
-                          else:
-                              # 移除HTML标签
-                              cleaned = re.sub(r'<(?!\/?code>)(?!\/?pre>)(?!\/?span>)(?!\/?div>)(?!\/?p>)(?!\/?br>)[^>]+>', '', part)
-                              final_parts.append(cleaned)
-                      processed_content = ''.join(final_parts)
-                  else:
-                      # 没有保护内容，直接移除HTML标签
-                      processed_content = re.sub(r'<(?!\/?code>)(?!\/?pre>)(?!\/?span>)(?!\/?div>)(?!\/?p>)(?!\/?br>)[^>]+>', '', processed_content)
-                  
-                  # 7. 恢复所有保护的内容
-                  final_content = restore_protected_content(processed_content, code_blocks, inline_code_blocks, quote_blocks, number_patterns, link_texts)
+                  # 7. 恢复代码块
+                  final_content = restore_code_blocks(processed_content, code_blocks, inline_code_blocks, quote_blocks)
                   
                   # 8. 移除<center>标签
                   final_content = re.sub(r'</?center>', '', final_content, flags=re.IGNORECASE)
@@ -368,18 +355,16 @@ jobs:
           \usepackage{float}
           \usepackage{placeins} % 用于控制浮动体位置
           \usepackage{mdframed} % 用于创建带背景的引用块
-          \usepackage{booktabs} % 用于更好的表格
-          \usepackage{array} % 用于表格列格式
-          \usepackage{longtable} % 用于长表格
+          \usepackage{soul} % 用于处理下划线等
           
           \definecolor{codebg}{rgb}{0.98,0.98,0.98}
           \definecolor{framecolor}{rgb}{0.8,0.8,0.8}
           \definecolor{quotebg}{rgb}{0.97,0.97,0.97}
           \definecolor{quoteframe}{rgb}{0.85,0.85,0.85}
           
-          % 代码块设置 - 增大字体并确保换行
+          % 代码块设置 - 增大字体
           \lstset{
-            basicstyle=\ttfamily\small, % 使用small字体，比footnotesize大
+            basicstyle=\ttfamily\small, % 增大字体
             backgroundcolor=\color{codebg},
             frame=single,
             framesep=6pt,
@@ -388,22 +373,22 @@ jobs:
             breaklines=true,
             breakatwhitespace=true,
             breakautoindent=true,
-            breakindent=25pt, % 增加缩进以便更好显示换行
+            breakindent=20pt, % 增加缩进以便更好显示换行
             postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
             showstringspaces=false,
             tabsize=2,
             numbers=none,
-            xleftmargin=15pt,
-            xrightmargin=15pt,
+            xleftmargin=12pt,
+            xrightmargin=12pt,
             upquote=true,
             columns=fullflexible,
             keepspaces=true,
             escapeinside={(*@}{@*)}, % 允许在代码块中插入LaTeX命令
             extendedchars=true,
-            literate={-}{-}1, % 正确处理连字符
+            literate={~}{{\textasciitilde}}1, % 正确处理~字符
           }
           
-          % 特殊处理text代码块 - 确保换行
+          % 特殊处理text代码块 - 确保自动换行
           \lstdefinestyle{textstyle}{
             basicstyle=\ttfamily\small,
             backgroundcolor=\color{codebg},
@@ -414,19 +399,19 @@ jobs:
             breaklines=true,
             breakatwhitespace=true,
             breakautoindent=true,
-            breakindent=25pt,
+            breakindent=20pt,
             postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
             showstringspaces=false,
             tabsize=2,
             numbers=none,
-            xleftmargin=15pt,
-            xrightmargin=15pt,
+            xleftmargin=12pt,
+            xrightmargin=12pt,
             upquote=true,
             columns=fullflexible,
             keepspaces=true,
             escapeinside={},
             extendedchars=true,
-            literate={-}{-}1,
+            literate={~}{{\textasciitilde}}1,
           }
           
           % 引用块设置
@@ -449,16 +434,13 @@ jobs:
           \usepackage{float}
           \floatplacement{figure}{H} % 强制图片在当前位置
           
-          % 防止图片标题
-          \usepackage{caption}
-          \captionsetup[figure]{labelformat=empty}
-          
           \usepackage{parskip}
           \setlength{\parindent}{0pt}
           \setlength{\parskip}{0.8em}
           
-          % 修复水平线显示
-          \newcommand{\hr}{\noindent\rule{\linewidth}{0.4pt}}
+          % 处理水平线 ---，使其显示为完整宽度的线
+          \newcommand{\hrrule}{\rule{\linewidth}{0.5pt}}
+          \renewcommand{\rule}[3]{\noindent\makebox[\linewidth]{\textcolor{gray}{\rule{\linewidth}{#2}}}}
           
           \sloppy
           \emergencystretch=3em
@@ -535,14 +517,11 @@ jobs:
             #1
             \end{quotebox}
           }
-          
-          % 保护特定数字模式，防止被错误格式化
-          \newcommand{\protectnumbers}[1]{#1}
           EOF
       
-      - name: "Create enhanced Pandoc filter"
+      - name: "Create Pandoc filter for quotes and special text"
         run: |
-          cat > enhanced-filter.lua << 'EOF'
+          cat > quote-filter.lua << 'EOF'
           function Block(el)
             -- 处理引用块
             if el.t == "BlockQuote" then
@@ -555,7 +534,7 @@ jobs:
             
             -- 处理水平线
             if el.t == "HorizontalRule" then
-              return pandoc.RawBlock('latex', '\\vspace{0.5em}\\noindent\\rule{\\linewidth}{0.4pt}\\vspace{0.5em}')
+              return pandoc.RawBlock('latex', '\\vspace{0.5em}\\noindent\\hrrule\\vspace{0.5em}')
             end
             
             return el
@@ -572,26 +551,14 @@ jobs:
             return el
           end
           
-          function Inlines(inlines)
-            -- 保护特定数字模式，防止被错误格式化
-            local result = {}
-            for i, inline in ipairs(inlines) do
-              if inline.t == "Str" then
-                -- 保护(0100)这样的模式
-                local text = inline.text
-                text = string.gsub(text, "%(0%d%d%d%)", function(match)
-                  return "\\protectnumbers{" .. match .. "}"
-                end)
-                if text ~= inline.text then
-                  table.insert(result, pandoc.RawInline('latex', text))
-                else
-                  table.insert(result, inline)
-                end
-              else
-                table.insert(result, inline)
-              end
+          function Str(el)
+            -- 处理普通文本中的特殊字符
+            local text = el.text
+            -- 保护特定格式的URL
+            if text:match('^<https?://') and text:match('>$') then
+              return pandoc.RawInline('latex', '\\texttt{' .. text .. '}')
             end
-            return result
+            return el
           end
           EOF
       
@@ -630,27 +597,19 @@ jobs:
             
             echo "资源路径: $resource_paths"
             
-            # 检查markdown文件中提到的图片
-            echo "检查图片引用..."
-            if [ -f "$md_file" ]; then
-              grep -n '!\[.*\](.*)' "$md_file" | head -5 | while read img_line; do
-                echo "  找到图片引用: $img_line"
-              done || true
-            fi
-            
             set +e
             
             # 转换PDF - 使用增强设置
             echo "开始转换PDF..."
             
-            # 构建Pandoc命令 - 移除了--table-of-contents=false参数
+            # 构建Pandoc命令
             pandoc "$md_file" \
               --resource-path="$resource_paths" \
               -o "pdf_output/$dir_name/$base_name.pdf" \
               --pdf-engine=xelatex \
               --listings \
               --include-in-header=header.tex \
-              --lua-filter=enhanced-filter.lua \
+              --lua-filter=quote-filter.lua \
               -V mainfont="Noto Serif CJK SC" \
               -V sansfont="Noto Sans CJK SC" \
               -V monofont="Noto Sans Mono CJK SC" \
@@ -661,8 +620,9 @@ jobs:
               -V urlcolor=blue \
               --wrap=auto \
               --highlight-style=tango \
-              -f markdown+hard_line_breaks \
+              -f markdown \
               -M date="$CURRENT_DATE" \
+              --toc-depth=0 \  # 不生成目录
               2>&1 | tee conversion.log
               
             conversion_status=$?
@@ -701,16 +661,14 @@ jobs:
             exit 1
           fi
       
-      - name: "Copy resource directories to output (excluding picture)"
+      - name: "Copy resource directories to output"
         run: |
           echo "复制resource目录到输出目录..."
           
-          # 查找所有有PDF文件的目录，只复制resource目录
           find pdf_output -name "*.pdf" -type f | while read pdf_file; do
             pdf_dir=$(dirname "$pdf_file")
             rel_dir=${pdf_dir#pdf_output/}
             
-            # 只复制resource目录，不复制picture目录
             if [ -d "$rel_dir/resource" ]; then
               echo "复制 $rel_dir/resource 到 $pdf_dir/"
               cp -r "$rel_dir/resource" "$pdf_dir/" 2>/dev/null || echo "无法复制 $rel_dir/resource"
@@ -727,12 +685,8 @@ jobs:
           else
             echo "总共生成 $total_pdfs 个PDF文件"
             
-            # 显示总大小
             total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; | awk '{sum+=$1} END {print int(sum/1024/1024)}')
             echo "PDF文件总大小: ${total_size_mb}MB"
-            
-            echo "前10个最大的PDF文件:"
-            find pdf_output -name "*.pdf" -type f -exec du -h {} \; | sort -rh | head -10
           fi
       
       - name: "Create release documentation"
@@ -747,20 +701,20 @@ jobs:
           echo "" >> pdf_output/README.md
           echo "生成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> pdf_output/README.md
           echo "已优化功能：" >> pdf_output/README.md
-          echo "1. ✅ 完全移除图片标签文本（图x: 标签名）" >> pdf_output/README.md
-          echo "2. ✅ 修复特殊数字显示异常（0100）" >> pdf_output/README.md
-          echo "3. ✅ 保护链接文本不丢失" >> pdf_output/README.md
-          echo "4. ✅ 增大代码块字体并确保换行" >> pdf_output/README.md
-          echo "5. ✅ 修复text代码块换行问题" >> pdf_output/README.md
-          echo "6. ✅ 修复水平线显示太短问题" >> pdf_output/README.md
-          echo "7. ✅ 保护表格内图片显示正常" >> pdf_output/README.md
-          echo "8. ✅ 图片位置固定，避免浮动错位" >> pdf_output/README.md
-          echo "9. ✅ 代码块自动换行，带边框" >> pdf_output/README.md
-          echo "10. ✅ 添加平铺式 'emakefun' 水印" >> pdf_output/README.md
-          echo "11. ✅ 移除多余宽度标记" >> pdf_output/README.md
-          echo "12. ✅ 为引用块添加底色框" >> pdf_output/README.md
-          echo "13. ✅ 不输出picture文件夹，只保留resource文件夹" >> pdf_output/README.md
-          echo "14. ✅ 不生成目录（默认不生成）" >> pdf_output/README.md
+          echo "1. 保护代码块内容，避免<>被移除" >> pdf_output/README.md
+          echo "2. 图片位置固定，避免浮动错位" >> pdf_output/README.md
+          echo "3. 表格内图片保持原样显示" >> pdf_output/README.md
+          echo "4. 代码块自动换行，带边框，增大字体" >> pdf_output/README.md
+          echo "5. 添加平铺式 'emakefun' 水印" >> pdf_output/README.md
+          echo "6. 完全移除非表格内图片标签（图x:）" >> pdf_output/README.md
+          echo "7. 移除多余宽度标记" >> pdf_output/README.md
+          echo "8. 为引用块添加底色框" >> pdf_output/README.md
+          echo "9. 修复text文本框换行，确保自动换行" >> pdf_output/README.md
+          echo "10. 保护特殊字符（如~），防止显示异常" >> pdf_output/README.md
+          echo "11. 保护特定格式URL链接，防止丢失" >> pdf_output/README.md
+          echo "12. 修复水平线显示过短问题" >> pdf_output/README.md
+          echo "13. 不输出picture文件夹，只保留resource文件夹" >> pdf_output/README.md
+          echo "14. 不生成目录" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
@@ -783,7 +737,6 @@ jobs:
               fi
             fi
             
-            # 检查是否有resource目录
             pdf_dir=$(dirname "$pdf_file")
             resource_exists=""
             if [ -d "$pdf_dir/resource" ]; then
@@ -796,7 +749,6 @@ jobs:
           echo "" >> pdf_output/README.md
           total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; | awk '{sum+=$1} END {print int(sum/1024/1024)}')
           
-          # 统计有resource目录的PDF数量
           resource_dirs_count=$(find pdf_output -type d -name "resource" 2>/dev/null | wc -l)
           
           echo "总计: $PDF_COUNT 个 PDF 文件, 总大小约 ${total_size_mb}MB, ${resource_dirs_count} 个目录包含resource资源" >> pdf_output/README.md
