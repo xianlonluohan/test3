@@ -40,7 +40,9 @@ jobs:
             lmodern \
             tree \
             jq \
-            python3-pip
+            python3-pip \
+            texlive-science \
+            texlive-fonts-extra
           
           pip3 install beautifulsoup4 markdown-it-py
       
@@ -273,83 +275,31 @@ jobs:
               content = re.sub(r'（(\d+)[.,](\d{2,3})）', r'（\1~\2）', content)
               return content
           
-          def fix_text_code_blocks(content):
-              """修复text代码块中的换行问题 - 增强版"""
-              # 匹配```text代码块
-              text_pattern = re.compile(r'```text\n(.*?)\n```', re.DOTALL)
-              
-              def fix_text_content(match):
-                  text_content = match.group(1)
-                  # 将内容分割为行
-                  lines = text_content.split('\n')
-                  fixed_lines = []
-                  
-                  for line in lines:
-                      if len(line.strip()) > 0:  # 跳过空行
-                          # 按空格分割单词
-                          words = line.strip().split(' ')
-                          current_line = ''
-                          for word in words:
-                              if len(current_line) + len(word) + 1 > 80:  # 如果行太长
-                                  fixed_lines.append(current_line)
-                                  current_line = word
-                              else:
-                                  if current_line:
-                                      current_line += ' ' + word
-                                  else:
-                                      current_line = word
-                          if current_line:
-                              fixed_lines.append(current_line)
-                      else:
-                          fixed_lines.append('')  # 保持空行
-                  
-                  # 确保每行不超过80个字符
-                  final_lines = []
-                  for line in fixed_lines:
-                      if len(line) > 80:
-                          # 按字符分割，确保每行不超过80字符
-                          chunks = [line[i:i+80] for i in range(0, len(line), 80)]
-                          final_lines.extend(chunks)
-                      else:
-                          final_lines.append(line)
-                  
-                  # 保持原有的空行结构
-                  if text_content.endswith('\n'):
-                      final_lines.append('')
-                  
-                  fixed_content = '\n'.join(final_lines)
-                  return f'```text\n{fixed_content}\n```'
-              
-              return text_pattern.sub(fix_text_content, content)
-          
           def process_markdown_file(filepath):
               print(f"处理文件: {filepath}")
               try:
                   with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                       content = f.read()
                   
-                  # 1. 修复text代码块中的换行问题（优先处理）
-                  content = fix_text_code_blocks(content)
-                  
-                  # 2. 保护代码块、内联代码和引用块
+                  # 1. 保护代码块、内联代码和引用块
                   protected_content, code_blocks, inline_code_blocks, quote_blocks = protect_code_blocks(content)
                   
-                  # 3. 保护特殊格式的链接
+                  # 2. 保护特殊格式的链接
                   protected_content = preserve_special_links(protected_content)
                   
-                  # 4. 处理非表格内的图片，确保正确位置
+                  # 3. 处理非表格内的图片，确保正确位置
                   processed_content = process_images_in_content(protected_content)
                   
-                  # 5. 移除图片标签和<center>标签
+                  # 4. 移除图片标签和<center>标签
                   processed_content = remove_image_labels_and_figures(processed_content)
                   
-                  # 6. 修复特殊字符问题
+                  # 5. 修复特殊字符问题
                   processed_content = fix_special_characters(processed_content)
                   
-                  # 7. 修复波浪号显示问题
+                  # 6. 修复波浪号显示问题
                   processed_content = fix_tilde_in_text(processed_content)
                   
-                  # 8. 处理链接标签（不处理代码块中的）
+                  # 7. 处理链接标签（不处理代码块中的）
                   link_pattern = re.compile(r'<a\s+([^>]+)>(.*?)</a>', re.IGNORECASE | re.DOTALL)
                   
                   def replace_link_tag(match):
@@ -364,11 +314,11 @@ jobs:
                   
                   processed_content = link_pattern.sub(replace_link_tag, processed_content)
                   
-                  # 9. 移除其他HTML标签（不处理代码块中的）
+                  # 8. 移除其他HTML标签（不处理代码块中的）
                   # 小心处理，避免移除代码中的<>
                   processed_content = re.sub(r'<(?!@@@CODE_BLOCK_|@@@INLINE_CODE_|@@@QUOTE_BLOCK_)(?!URL_PLACEHOLDER)(?!\/?code>)(?!\/?pre>)(?!\/?span>)(?!\/?div>)(?!\/?p>)(?!\/?br>)[^>]+>', '', processed_content)
                   
-                  # 10. 恢复代码块
+                  # 9. 恢复代码块
                   final_content = restore_code_blocks(processed_content, code_blocks, inline_code_blocks, quote_blocks)
                   
                   # 保存处理后的文件
@@ -420,7 +370,8 @@ jobs:
             pdfborder={0 0 0},
           }
           
-          \usepackage{listings}
+          % 使用minted包代替listings，更好的代码高亮和换行支持
+          \usepackage{minted}
           \usepackage{xcolor}
           \usepackage{graphicx}
           \usepackage{float}
@@ -433,65 +384,52 @@ jobs:
           \definecolor{quotebg}{rgb}{0.97,0.97,0.97}
           \definecolor{quoteframe}{rgb}{0.85,0.85,0.85}
           
-          % 代码块设置 - 增大字体并确保自动换行
-          \lstset{
-            basicstyle=\ttfamily\footnotesize\selectfont, % 使用footnotesize确保文本适配
-            backgroundcolor=\color{codebg},
-            frame=single,
-            framesep=8pt, % 增加内边距
-            framerule=1pt, % 边框稍粗
-            rulecolor=\color{framecolor},
-            breaklines=true,
-            breakatwhitespace=true,
-            breakautoindent=true,
-            breakindent=20pt, % 调整换行缩进
-            postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
-            showstringspaces=false,
-            tabsize=2,
-            numbers=none,
-            xleftmargin=15pt,
-            xrightmargin=15pt,
-            upquote=true,
-            columns=fullflexible,
-            keepspaces=true,
-            escapeinside={(*@}{@*)}, % 允许在代码块中插入LaTeX命令
-            lineskip=2pt, % 增加行间距
-            literate={~}{{\textasciitilde}}1, % 正确处理波浪号
-            breaklines=true, % 强制换行
-            prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
-            aboveskip=6pt, % 代码块上方间距
-            belowskip=6pt, % 代码块下方间距
-          }
-          
-          % 特殊处理text代码块 - 增强换行处理
-          \lstdefinestyle{textstyle}{
-            basicstyle=\ttfamily\footnotesize\selectfont, % 减小字体以确保换行
-            backgroundcolor=\color{codebg},
+          % minted代码块设置 - 更好的换行支持
+          \setminted{
+            bgcolor=codebg,
             frame=single,
             framesep=8pt,
             framerule=1pt,
-            rulecolor=\color{framecolor},
+            rulecolor=framecolor,
             breaklines=true,
-            breakatwhitespace=true,
-            breakautoindent=true,
-            breakindent=20pt, % 调整换行缩进
-            postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
-            showstringspaces=true, % 显示空格，有助于调试
-            tabsize=2,
-            numbers=none,
+            breakanywhere=true, % 允许在任何位置换行
+            breaksymbolleft={\small\ensuremath{\hookrightarrow}},
+            breaksymbolright={\small\ensuremath{\hookleftarrow}},
+            linenos=false,
             xleftmargin=15pt,
             xrightmargin=15pt,
-            upquote=true,
-            columns=fullflexible,
-            keepspaces=true,
-            escapeinside={},
-            lineskip=2pt, % 增加行间距
-            literate={~}{{\textasciitilde}}1, % 正确处理波浪号
-            breaklines=true, % 强制换行
-            prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
-            aboveskip=6pt, % 代码块上方间距
-            belowskip=6pt, % 代码块下方间距
-            breakanywhere=true, % 允许在任何位置断行
+            numbersep=5pt,
+            fontsize=\footnotesize,
+            tabsize=2,
+            obeytabs=false,
+            showspaces=false,
+            showtabs=false,
+            baselinestretch=1.2,
+            escapeinside=||,
+            autogobble=true,
+          }
+          
+          % 特殊设置text代码块
+          \newmintinline[inlinecode]{text}{
+            breaklines=true,
+            breakanywhere=true,
+            fontsize=\small,
+          }
+          
+          % 为text代码块创建特殊环境
+          \newminted{text}{
+            breaklines=true,
+            breakanywhere=true,
+            breaksymbolleft={\small\ensuremath{\hookrightarrow}},
+            breaksymbolright={\small\ensuremath{\hookleftarrow}},
+            frame=single,
+            framesep=8pt,
+            framerule=1pt,
+            rulecolor=framecolor,
+            bgcolor=codebg,
+            fontsize=\footnotesize,
+            xleftmargin=15pt,
+            xrightmargin=15pt,
           }
           
           % 引用块设置
@@ -602,9 +540,9 @@ jobs:
             \end{quotebox}
           }
           
-          % 特殊处理text代码块的换行
-          \usepackage{fvextra}
-          \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,breakanywhere,commandchars=\\\{\}}
+          % 重命名minted环境，避免冲突
+          \renewcommand{\listingscaption}{代码}
+          \renewcommand{\listoflistingscaption}{代码列表}
           EOF
       
       - name: "Create Pandoc filter for enhanced processing"
@@ -629,33 +567,29 @@ jobs:
           end
           
           function CodeBlock(el)
-            -- 处理代码块，如果是text类型则使用特殊样式
-            if el.classes[1] == "text" then
-              -- 确保text代码块的内容正确换行
-              local lines = {}
-              for line in string.gmatch(el.text, "[^\n]+") do
-                -- 如果行太长，尝试按80字符分割
-                if string.len(line) > 80 then
-                  local chunks = {}
-                  for i = 1, string.len(line), 80 do
-                    table.insert(chunks, string.sub(line, i, i + 79))
-                  end
-                  for _, chunk in ipairs(chunks) do
-                    table.insert(lines, chunk)
-                  end
-                else
-                  table.insert(lines, line)
-                end
-              end
-              
-              local formatted_text = table.concat(lines, "\n")
+            -- 处理代码块，使用minted代替listings
+            local lang = el.classes[1] or "text"
+            local content = el.text
+            
+            -- 确保text代码块的内容正确换行
+            if lang == "text" then
+              -- 对于text代码块，确保内容不会被错误转义
+              content = content:gsub("\\", "\\textbackslash{}")
+              content = content:gsub("~", "\\textasciitilde{}")
+              content = content:gsub("^%s+", "")
+              content = content:gsub("%s+$", "")
               
               return pandoc.RawBlock('latex', 
-                '\\begin{lstlisting}[style=textstyle]\n' .. 
-                formatted_text .. 
-                '\n\\end{lstlisting}')
+                '\\begin{minted}[breaklines=true, breakanywhere=true]{text}\n' .. 
+                content .. 
+                '\n\\end{minted}')
+            else
+              -- 其他代码块使用minted
+              return pandoc.RawBlock('latex', 
+                '\\begin{minted}{' .. lang .. '}\n' .. 
+                content .. 
+                '\n\\end{minted}')
             end
-            return el
           end
           
           function Str(el)
@@ -677,7 +611,16 @@ jobs:
             -- 处理内联代码中的波浪号
             local text = el.text
             text = text:gsub('~', '\\textasciitilde{}')
+            text = text:gsub("\\", "\\textbackslash{}")
             return pandoc.Code(text)
+          end
+          
+          function RawBlock(el)
+            -- 确保已有的LaTeX代码块不被处理
+            if el.format == "tex" or el.format == "latex" then
+              return el
+            end
+            return nil
           end
           EOF
       
@@ -721,12 +664,11 @@ jobs:
             # 转换PDF - 使用增强设置
             echo "开始转换PDF..."
             
-            # 构建Pandoc命令
+            # 构建Pandoc命令 - 使用minted而不是listings
             pandoc "$md_file" \
               --resource-path="$resource_paths" \
               -o "pdf_output/$dir_name/$base_name.pdf" \
               --pdf-engine=xelatex \
-              --listings \
               --include-in-header=header.tex \
               --lua-filter=quote-filter.lua \
               -V mainfont="Noto Serif CJK SC" \
@@ -738,9 +680,10 @@ jobs:
               -V linkcolor=blue \
               -V urlcolor=blue \
               --wrap=auto \
-              --highlight-style=tango \
               -f markdown \
               -M date="$CURRENT_DATE" \
+              --highlight-style=tango \
+              --listings \
               2>&1 | tee conversion.log
               
             conversion_status=$?
@@ -828,14 +771,14 @@ jobs:
           echo "1. 保护代码块内容，避免<>被移除" >> pdf_output/README.md
           echo "2. 图片位置固定，避免浮动错位" >> pdf_output/README.md
           echo "3. 表格内图片保持原样显示" >> pdf_output/README.md
-          echo "4. 代码块字体增大，自动换行优化" >> pdf_output/README.md
+          echo "4. 代码块字体增大，自动换行优化（使用minted包）" >> pdf_output/README.md
           echo "5. 添加平铺式 'emakefun' 水印" >> pdf_output/README.md
           echo "6. 完全移除非表格内图片标签（图x:）" >> pdf_output/README.md
           echo "7. 修复特殊字符问题（如0100->0~100）" >> pdf_output/README.md
           echo "8. 修复波浪号(~)显示问题" >> pdf_output/README.md
           echo "9. 特殊格式链接转为内联代码" >> pdf_output/README.md
           echo "10. 为引用块添加底色框" >> pdf_output/README.md
-          echo "11. 修复text文本框换行问题" >> pdf_output/README.md
+          echo "11. text代码块换行问题已修复" >> pdf_output/README.md
           echo "12. 优化水平线显示" >> pdf_output/README.md
           echo "13. 不输出picture文件夹，只保留resource文件夹" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
