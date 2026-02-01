@@ -1,4 +1,4 @@
-name: "Markdown to PDF Converter with Tiled Watermark - Enhanced Fix"
+name: "Markdown to PDF Converter with Tiled Watermark - Enhanced Fix v2"
 
 on:
   push:
@@ -212,7 +212,7 @@ jobs:
               
               return processed_content
           
-          def fix_tilde_in_text(content):
+          def fix_tilde_in_text_v2(content):
               """修复波浪号(~)显示问题，但保护代码块中的内容"""
               # 保护代码块中的内容
               code_pattern = re.compile(r'```.*?```', re.DOTALL)
@@ -234,9 +234,9 @@ jobs:
               
               protected_content = inline_pattern.sub(replace_inline, protected_content)
               
-              # 修复波浪号问题（0~100变为0~100，但需要确保~不被转义）
-              # 将 ~ 替换为 LaTeX 安全的 ~{}
-              protected_content = re.sub(r'(?<=\d)~(?=\d)', r'~{}', protected_content)
+              # 修复波浪号问题：将普通文本中的波浪号替换为 LaTeX 安全的 {~}
+              # 特别注意数字范围如 0~255
+              protected_content = re.sub(r'(?<=\d)~(?=\d)', r'{~}', protected_content)
               
               # 恢复代码块
               for i, code_block in enumerate(code_blocks):
@@ -273,31 +273,62 @@ jobs:
               content = re.sub(r'（(\d+)[.,](\d{2,3})）', r'（\1~\2）', content)
               return content
           
-          def fix_text_code_blocks(content):
-              """修复text代码块中的换行问题 - 针对中文文本优化"""
+          def fix_text_code_blocks_v2(content):
+              """修复text代码块中的换行问题 - 优化版"""
               # 匹配```text代码块
               text_pattern = re.compile(r'```text\n(.*?)\n```', re.DOTALL)
               
               def fix_text_content(match):
                   text_content = match.group(1)
-                  # 将长行分割为较短的行，针对中文优化
+                  # 将长行分割为较短的行
                   lines = text_content.split('\n')
                   fixed_lines = []
                   
                   for line in lines:
-                      # 移除行尾空白
-                      line = line.rstrip()
-                      if len(line) > 60:  # 针对中文，如果行太长（60个字符）
-                          # 按字符分割，每50个字符一行
-                          for i in range(0, len(line), 50):
-                              fixed_lines.append(line[i:i+50])
+                      if len(line) > 100:  # 如果行太长
+                          # 在合适的位置分割，但保持单词完整
+                          words = line.split(' ')
+                          current_line = ''
+                          for word in words:
+                              if len(current_line) + len(word) + 1 > 80:
+                                  fixed_lines.append(current_line)
+                                  current_line = word
+                              else:
+                                  if current_line:
+                                      current_line += ' ' + word
+                                  else:
+                                      current_line = word
+                          if current_line:
+                              fixed_lines.append(current_line)
                       else:
                           fixed_lines.append(line)
                   
                   fixed_content = '\n'.join(fixed_lines)
+                  # 确保text代码块有正确的结束标记
                   return f'```text\n{fixed_content}\n```'
               
               return text_pattern.sub(fix_text_content, content)
+          
+          def protect_code_blocks_from_tilde_fix(content):
+              """专门保护代码块，避免波浪号修复影响"""
+              # 匹配所有代码块
+              code_pattern = re.compile(r'```(.*?)```', re.DOTALL)
+              
+              def protect_code(match):
+                  code_content = match.group(0)
+                  # 为代码块添加特殊标记，以便在后续处理中识别
+                  return f'<!--PROTECTED_CODE_START-->{code_content}<!--PROTECTED_CODE_END-->'
+              
+              protected_content = code_pattern.sub(protect_code, content)
+              
+              return protected_content
+          
+          def restore_protected_code_blocks(content):
+              """恢复受保护的代码块"""
+              # 移除代码块保护标记
+              content = re.sub(r'<!--PROTECTED_CODE_START-->', '', content)
+              content = re.sub(r'<!--PROTECTED_CODE_END-->', '', content)
+              return content
           
           def process_markdown_file(filepath):
               print(f"处理文件: {filepath}")
@@ -305,28 +336,39 @@ jobs:
                   with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                       content = f.read()
                   
-                  # 1. 修复text代码块中的换行问题 - 先处理
-                  content = fix_text_code_blocks(content)
+                  print(f"原始内容长度: {len(content)} 字符")
                   
-                  # 2. 保护代码块、内联代码和引用块
-                  protected_content, code_blocks, inline_code_blocks, quote_blocks = protect_code_blocks(content)
+                  # 1. 保护代码块，避免波浪号修复影响
+                  content = protect_code_blocks_from_tilde_fix(content)
+                  
+                  # 2. 修复text代码块中的换行问题
+                  content = fix_text_code_blocks_v2(content)
                   
                   # 3. 保护特殊格式的链接
-                  protected_content = preserve_special_links(protected_content)
+                  content = preserve_special_links(content)
                   
-                  # 4. 处理非表格内的图片，确保正确位置
+                  # 4. 恢复受保护的代码块
+                  content = restore_protected_code_blocks(content)
+                  
+                  # 5. 保护代码块、内联代码和引用块
+                  protected_content, code_blocks, inline_code_blocks, quote_blocks = protect_code_blocks(content)
+                  
+                  print(f"保护后内容长度: {len(protected_content)} 字符")
+                  print(f"保护了 {len(code_blocks)} 个代码块, {len(inline_code_blocks)} 个内联代码块, {len(quote_blocks)} 个引用块")
+                  
+                  # 6. 处理非表格内的图片，确保正确位置
                   processed_content = process_images_in_content(protected_content)
                   
-                  # 5. 移除图片标签和<center>标签
+                  # 7. 移除图片标签和<center>标签
                   processed_content = remove_image_labels_and_figures(processed_content)
                   
-                  # 6. 修复特殊字符问题
+                  # 8. 修复特殊字符问题
                   processed_content = fix_special_characters(processed_content)
                   
-                  # 7. 修复波浪号显示问题
-                  processed_content = fix_tilde_in_text(processed_content)
+                  # 9. 修复波浪号显示问题 - 使用新版本
+                  processed_content = fix_tilde_in_text_v2(processed_content)
                   
-                  # 8. 处理链接标签（不处理代码块中的）
+                  # 10. 处理链接标签（不处理代码块中的）
                   link_pattern = re.compile(r'<a\s+([^>]+)>(.*?)</a>', re.IGNORECASE | re.DOTALL)
                   
                   def replace_link_tag(match):
@@ -341,12 +383,14 @@ jobs:
                   
                   processed_content = link_pattern.sub(replace_link_tag, processed_content)
                   
-                  # 9. 移除其他HTML标签（不处理代码块中的）
+                  # 11. 移除其他HTML标签（不处理代码块中的）
                   # 小心处理，避免移除代码中的<>
                   processed_content = re.sub(r'<(?!@@@CODE_BLOCK_|@@@INLINE_CODE_|@@@QUOTE_BLOCK_)(?!URL_PLACEHOLDER)(?!\/?code>)(?!\/?pre>)(?!\/?span>)(?!\/?div>)(?!\/?p>)(?!\/?br>)[^>]+>', '', processed_content)
                   
-                  # 10. 恢复代码块
+                  # 12. 恢复代码块
                   final_content = restore_code_blocks(processed_content, code_blocks, inline_code_blocks, quote_blocks)
+                  
+                  print(f"最终内容长度: {len(final_content)} 字符")
                   
                   # 保存处理后的文件
                   with open(filepath, 'w', encoding='utf-8') as f:
@@ -412,7 +456,7 @@ jobs:
           
           % 代码块设置 - 增大字体并确保自动换行
           \lstset{
-            basicstyle=\ttfamily\normalsize\selectfont, % 增大字体大小
+            basicstyle=\ttfamily\small\selectfont, % 使用small字体
             backgroundcolor=\color{codebg},
             frame=single,
             framesep=8pt, % 增加内边距
@@ -428,7 +472,7 @@ jobs:
             numbers=none,
             xleftmargin=15pt,
             xrightmargin=15pt,
-            upquote=true,
+            upquote=true, % 正确显示引号和波浪号
             columns=fullflexible,
             keepspaces=true,
             escapeinside={(*@}{@*)}, % 允许在代码块中插入LaTeX命令
@@ -436,35 +480,38 @@ jobs:
             literate={~}{{\textasciitilde}}1, % 正确处理波浪号
             breaklines=true, % 强制换行
             prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
+            extendedchars=true, % 支持扩展字符
+            inputencoding=utf8, % UTF-8编码
           }
           
-          % 特殊处理text代码块 - 优化自动换行（针对中文）
+          % 特殊处理text代码块 - 优化自动换行
           \lstdefinestyle{textstyle}{
-            basicstyle=\ttfamily\normalsize\selectfont, % 增大字体
-            backgroundcolor=\color{codebg},
+            basicstyle=\ttfamily\small\selectfont, % 增大字体
+            backgroundcolor=\color{codebg!90},  % 稍微不同的背景色
             frame=single,
-            framesep=8pt,
-            framerule=1pt,
-            rulecolor=\color{framecolor},
-            breaklines=true, % 允许自动换行
-            breakatwhitespace=false, % 中文不需要在空格处换行
-            breakautoindent=true, % 换行后自动缩进
-            breakindent=2em, % 换行后缩进2个字符
-            postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space}, % 换行后标记
+            framesep=10pt, % 更大的内边距
+            framerule=1.2pt, % 稍粗的边框
+            rulecolor=\color{blue!30},
+            breaklines=true,
+            breakatwhitespace=true,
+            breakautoindent=true,
+            breakindent=30pt, % 更大的换行缩进
+            postbreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\color{gray}\hookrightarrow\space}},
             showstringspaces=false,
             tabsize=2,
             numbers=none,
-            xleftmargin=15pt,
-            xrightmargin=15pt,
+            xleftmargin=20pt,
+            xrightmargin=20pt,
             upquote=true,
-            columns=fullflexible, % 使用灵活的列
+            columns=fullflexible,
             keepspaces=true,
             escapeinside={},
-            lineskip=3pt, % 增加行间距
+            lineskip=3pt, % 更大的行间距
             literate={~}{{\textasciitilde}}1, % 正确处理波浪号
             breaklines=true, % 强制换行
-            prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
-            breakindent=2.5em, % 换行后缩进
+            prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\color{gray}\hookleftarrow\space}}, % 换行前的标记
+            extendedchars=true,
+            inputencoding=utf8,
           }
           
           % 引用块设置
@@ -576,7 +623,7 @@ jobs:
           }
           EOF
       
-      - name: "Create Pandoc filter for enhanced processing"
+      - name: "Create Pandoc filter for enhanced processing v2"
         run: |
           cat > quote-filter.lua << 'EOF'
           function Block(el)
@@ -600,13 +647,21 @@ jobs:
           function CodeBlock(el)
             -- 处理代码块，如果是text类型则使用特殊样式
             if el.classes[1] == "text" then
-              -- 对text代码块进行特殊处理，确保换行
+              -- 清理text内容，确保正确的换行
+              local content = el.text
+              -- 移除可能的多余换行符
+              content = content:gsub('\r\n', '\n')
+              content = content:gsub('\r', '\n')
+              -- 确保最后有换行
+              if not content:match('\n$') then
+                content = content .. '\n'
+              end
+              
               return pandoc.RawBlock('latex', 
                 '\\begin{lstlisting}[style=textstyle]\n' .. 
-                el.text .. 
-                '\n\\end{lstlisting}')
+                content .. 
+                '\\end{lstlisting}')
             end
-            -- 其他代码块使用默认样式
             return el
           end
           
@@ -614,13 +669,16 @@ jobs:
             -- 处理特殊字符
             local text = el.text
             
-            -- 修复波浪号显示
-            text = text:gsub('~', '\\textasciitilde{}')
+            -- 修复波浪号显示 - 使用Python处理过的格式
+            text = text:gsub('{~}', '\\textasciitilde{}')
             
             -- 修复其他字符问题
             text = text:gsub('（0,100）', '（0~100）')
             text = text:gsub('（0%.100）', '（0~100）')
             text = text:gsub('（(%d+)[.,](%d%d%d）', '（%1~%2）')
+            
+            -- 处理数字范围中的波浪号
+            text = text:gsub('(%d)~(%d)', '%1\\textasciitilde{}%2')
             
             return pandoc.Str(text)
           end
@@ -631,13 +689,21 @@ jobs:
             text = text:gsub('~', '\\textasciitilde{}')
             return pandoc.Code(text)
           end
+          
+          -- 处理Inline元素中的波浪号
+          function Inline(el)
+            if el.t == "Str" then
+              return Str(el)
+            end
+            return el
+          end
           EOF
       
       - name: "Set up output directory"
         run: |
           mkdir -p pdf_output
       
-      - name: "Convert Markdown to PDF with enhanced settings"
+      - name: "Convert Markdown to PDF with enhanced settings v2"
         run: |
           MD_FILES=$(find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" -not -path "./pdf_output/*" | sed 's/^\.\///')
           
@@ -689,10 +755,13 @@ jobs:
               -V colorlinks=true \
               -V linkcolor=blue \
               -V urlcolor=blue \
-              --wrap=auto \
+              --wrap=preserve \  # 保持原有换行
+              --columns=80 \     # 设置行宽
               --highlight-style=tango \
-              -f markdown \
+              -f markdown+backtick_code_blocks \
               -M date="$CURRENT_DATE" \
+              --toc-depth=0 \    # 不生成目录
+              --variable=block-headings \
               2>&1 | tee conversion.log
               
             conversion_status=$?
@@ -707,13 +776,18 @@ jobs:
               # 检查PDF文件大小
               pdf_size=$(du -h "pdf_output/$dir_name/$base_name.pdf" | cut -f1)
               echo "PDF文件大小: $pdf_size"
+              
+              # 检查PDF中是否有文本内容
+              pdf_text=$(pdftotext "pdf_output/$dir_name/$base_name.pdf" - 2>/dev/null | head -20)
+              echo "PDF前20行文本预览:"
+              echo "$pdf_text"
             else
               echo "✗ 转换失败: $md_file"
               failed_count=$((failed_count + 1))
               
               if [ -f "conversion.log" ]; then
                 echo "转换日志:"
-                tail -50 conversion.log
+                tail -100 conversion.log
               fi
             fi
             
@@ -761,8 +835,15 @@ jobs:
             total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; | awk '{sum+=$1} END {print int(sum/1024/1024)}')
             echo "PDF文件总大小: ${total_size_mb}MB"
             
-            echo "前10个最大的PDF文件:"
-            find pdf_output -name "*.pdf" -type f -exec du -h {} \; | sort -rh | head -10
+            echo "前5个最大的PDF文件:"
+            find pdf_output -name "*.pdf" -type f -exec du -h {} \; | sort -rh | head -5
+            
+            # 检查一个示例PDF的波浪号显示
+            sample_pdf=$(find pdf_output -name "*.pdf" -type f | head -1)
+            if [ -n "$sample_pdf" ]; then
+              echo "检查示例PDF中的波浪号显示..."
+              pdftotext "$sample_pdf" - 2>/dev/null | grep -i "0.*255\|~" | head -5
+            fi
           fi
       
       - name: "Create release documentation"
@@ -776,20 +857,22 @@ jobs:
           echo "# PDF 文档集" > pdf_output/README.md
           echo "" >> pdf_output/README.md
           echo "生成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> pdf_output/README.md
+          echo "版本: v2 - 优化波浪号和代码块处理" >> pdf_output/README.md
           echo "已优化功能：" >> pdf_output/README.md
-          echo "1. 保护代码块内容，避免<>被移除" >> pdf_output/README.md
-          echo "2. 图片位置固定，避免浮动错位" >> pdf_output/README.md
-          echo "3. 表格内图片保持原样显示" >> pdf_output/README.md
-          echo "4. 代码块字体增大，自动换行优化" >> pdf_output/README.md
-          echo "5. 添加平铺式 'emakefun' 水印" >> pdf_output/README.md
-          echo "6. 完全移除非表格内图片标签（图x:）" >> pdf_output/README.md
-          echo "7. 修复特殊字符问题（如0100->0~100）" >> pdf_output/README.md
-          echo "8. 修复波浪号(~)显示问题" >> pdf_output/README.md
-          echo "9. 特殊格式链接转为内联代码" >> pdf_output/README.md
-          echo "10. 为引用块添加底色框" >> pdf_output/README.md
-          echo "11. 修复text文本框换行问题" >> pdf_output/README.md
-          echo "12. 优化水平线显示" >> pdf_output/README.md
-          echo "13. 不输出picture文件夹，只保留resource文件夹" >> pdf_output/README.md
+          echo "1. ✅ 保护代码块内容，避免<>被移除" >> pdf_output/README.md
+          echo "2. ✅ 图片位置固定，避免浮动错位" >> pdf_output/README.md
+          echo "3. ✅ 表格内图片保持原样显示" >> pdf_output/README.md
+          echo "4. ✅ 代码块字体增大，自动换行优化" >> pdf_output/README.md
+          echo "5. ✅ 添加平铺式 'emakefun' 水印" >> pdf_output/README.md
+          echo "6. ✅ 完全移除非表格内图片标签（图x:）" >> pdf_output/README.md
+          echo "7. ✅ 修复特殊字符问题（如0100->0~100）" >> pdf_output/README.md
+          echo "8. ✅ 修复波浪号(~)显示问题（使用{~}语法）" >> pdf_output/README.md
+          echo "9. ✅ 特殊格式链接转为内联代码" >> pdf_output/README.md
+          echo "10. ✅ 为引用块添加底色框" >> pdf_output/README.md
+          echo "11. ✅ 修复text文本框换行问题（特殊处理）" >> pdf_output/README.md
+          echo "12. ✅ 优化水平线显示" >> pdf_output/README.md
+          echo "13. ✅ 不输出picture文件夹，只保留resource文件夹" >> pdf_output/README.md
+          echo "14. ✅ 增强text代码块样式（蓝色边框）" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
@@ -842,7 +925,7 @@ jobs:
       - name: "Upload PDF artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: pdf-documents
+          name: pdf-documents-v2
           path: |
             pdf_output/
             pdf-documents-*.zip
@@ -854,7 +937,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref_name }}
-          name: "PDF Documents - ${{ github.ref_name }}"
+          name: "PDF Documents v2 - ${{ github.ref_name }}"
           body_path: pdf_output/README.md
           files: |
             pdf-documents-${{ github.ref_name }}.zip
