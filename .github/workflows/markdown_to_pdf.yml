@@ -1,830 +1,139 @@
-name: "Markdown to PDF Converter with Tiled Watermark - Enhanced Fix v4"
+name: Markdown to PDF Converter
 
 on:
   push:
-    branches: ["main", "master"]
-    tags: ["v*", "pdf-*"]
-  pull_request:
-    branches: ["main", "master"]
-  workflow_dispatch:
-
-permissions:
-  contents: write
-  pages: write
-  id-token: write
+    tags:
+      - 'v*'  # 仅当创建v开头的tag时触发
+      - '*.*.*'  # 或者任何语义化版本tag
 
 jobs:
-  convert-md-to-pdf:
+  convert-and-release:
     runs-on: ubuntu-latest
     
     steps:
-      - name: "Checkout repository"
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # 获取所有历史以便生成changelog
       
-      - name: "Install dependencies"
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            pandoc \
-            texlive-xetex \
-            texlive-latex-extra \
-            texlive-fonts-recommended \
-            texlive-latex-recommended \
-            texlive-lang-chinese \
-            fonts-noto-cjk \
-            fonts-noto-cjk-extra \
-            fonts-wqy-microhei \
-            fonts-wqy-zenhei \
-            lmodern \
-            tree \
-            jq \
-            python3-pip
-          
-          pip3 install beautifulsoup4 markdown-it-py
-      
-      - name: "Create enhanced HTML to Markdown converter"
-        run: |
-          cat > convert_html_enhanced.py << 'EOF'
-          import os
-          import re
-          import sys
-          
-          def protect_code_blocks(content):
-              """保护代码块，防止被HTML转换处理"""
-              code_blocks = []
-              protected_content = content
-              
-              # 保护代码块（```code```格式）
-              def replace_code_block(match):
-                  code_blocks.append(match.group(0))
-                  return f"@@@CODE_BLOCK_{len(code_blocks)-1}@@@"
-              
-              # 匹配标准的Markdown代码块
-              code_pattern = re.compile(r'```(?:[a-zA-Z0-9_+-]*\n)?.*?\n```', re.DOTALL)
-              protected_content = code_pattern.sub(replace_code_block, protected_content)
-              
-              # 保护内联代码（`code`格式）
-              inline_code_blocks = []
-              def replace_inline_code(match):
-                  inline_code_blocks.append(match.group(0))
-                  return f"@@@INLINE_CODE_{len(inline_code_blocks)-1}@@@"
-              
-              inline_pattern = re.compile(r'`[^`\n]+`')
-              protected_content = inline_pattern.sub(replace_inline_code, protected_content)
-              
-              # 保护引用块（> 开头的内容）
-              quote_blocks = []
-              def replace_quote_block(match):
-                  quote_blocks.append(match.group(0))
-                  return f"@@@QUOTE_BLOCK_{len(quote_blocks)-1}@@@"
-              
-              # 匹配引用块，以 > 开头，直到遇到空行或非引用行
-              quote_pattern = re.compile(r'^(?:>.*\n?)+', re.MULTILINE)
-              protected_content = quote_pattern.sub(replace_quote_block, protected_content)
-              
-              return protected_content, code_blocks, inline_code_blocks, quote_blocks
-          
-          def restore_code_blocks(content, code_blocks, inline_code_blocks, quote_blocks):
-              """恢复保护的代码块"""
-              restored_content = content
-              
-              # 恢复代码块
-              for i, code_block in enumerate(code_blocks):
-                  placeholder = f"@@@CODE_BLOCK_{i}@@@"
-                  restored_content = restored_content.replace(placeholder, code_block)
-              
-              # 恢复内联代码
-              for i, inline_code in enumerate(inline_code_blocks):
-                  placeholder = f"@@@INLINE_CODE_{i}@@@"
-                  restored_content = restored_content.replace(placeholder, inline_code)
-              
-              # 恢复引用块
-              for i, quote_block in enumerate(quote_blocks):
-                  placeholder = f"@@@QUOTE_BLOCK_{i}@@@"
-                  restored_content = restored_content.replace(placeholder, quote_block)
-              
-              return restored_content
-          
-          def process_images_in_content(content):
-              """处理内容中的图片，确保表格内图片不受影响"""
-              lines = content.split('\n')
-              processed_lines = []
-              in_table = False
-              
-              for line in lines:
-                  # 检查是否在表格中
-                  if line.strip().startswith('|') and '|' in line[1:]:
-                      in_table = True
-                      # 表格内的内容保持不变
-                      processed_lines.append(line)
-                  elif line.strip() == '':
-                      in_table = False
-                      processed_lines.append(line)
-                  elif in_table:
-                      # 表格内的内容保持不变
-                      processed_lines.append(line)
-                  else:
-                      # 非表格内容处理图片
-                      processed_line = process_non_table_images(line)
-                      processed_lines.append(processed_line)
-              
-              return '\n'.join(processed_lines)
-          
-          def process_non_table_images(line):
-              """处理非表格内的图片，移除图片标签和宽度标记"""
-              # 处理HTML格式的图片 <img src="..." alt="..." width="...">
-              img_pattern = re.compile(r'<img\s+([^>]+)>', re.IGNORECASE)
-              
-              def replace_img_tag(match):
-                  attrs_str = match.group(1)
-                  
-                  # 提取属性
-                  src_match = re.search(r'src\s*=\s*["\']([^"\']+)["\']', attrs_str)
-                  alt_match = re.search(r'alt\s*=\s*["\']([^"\']*)["\']', attrs_str)
-                  
-                  src = src_match.group(1) if src_match else ''
-                  alt = alt_match.group(1) if alt_match else ''
-                  
-                  # 清理src路径
-                  if src:
-                      src = re.sub(r'^\./', '', src)
-                      src = re.sub(r'^/', '', src)
-                  
-                  # 构建Markdown图片，添加换行确保独立段落
-                  return f'\n![{alt}]({src})\n'
-              
-              # 先处理HTML格式图片
-              line = img_pattern.sub(replace_img_tag, line)
-              
-              # 处理Markdown格式的图片 ![alt](src)
-              md_img_pattern = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
-              
-              def ensure_img_newlines(match):
-                  alt = match.group(1)
-                  src = match.group(2)
-                  # 确保图片前后有换行，形成独立段落
-                  return f'\n![{alt}]({src})\n'
-              
-              line = md_img_pattern.sub(ensure_img_newlines, line)
-              
-              # 移除图片后的宽度标记 {width=...}
-              line = re.sub(r'\s*\{width=[^}]+\}', '', line)
-              
-              return line
-          
-          def remove_image_labels_and_figures(content):
-              """移除图片下方的标签文本，如'图1: alt text'等，以及<center>标签"""
-              lines = content.split('\n')
-              processed_lines = []
-              
-              i = 0
-              while i < len(lines):
-                  line = lines[i]
-                  
-                  # 检查是否是图片行
-                  if re.search(r'!\[.*\]\(.*\)', line):
-                      processed_lines.append(line)
-                      
-                      # 跳过可能的图片标签行
-                      i += 1
-                      while i < len(lines):
-                          next_line = lines[i]
-                          # 检查是否是各种形式的图片标签
-                          if re.match(r'^(图\d*:|图片\d*:|图\s*\d+\s*:|<center>图\d*:</center>|图\d*:|图\s*\d+\s*:.*|图\d+.*|图\s+\d+.*)', next_line.strip()):
-                              i += 1
-                              continue
-                          else:
-                              break
-                      continue
-                  
-                  # 移除<center>标签
-                  line = re.sub(r'</?center>', '', line, flags=re.IGNORECASE)
-                  
-                  # 检查是否是独立的图片标签行（可能没有前导图片行）
-                  if not re.match(r'^(图\d*:|图片\d*:|图\s*\d+\s*:|<center>图\d*:</center>|图\d*:|图\s*\d+\s*:.*|图\d+.*|图\s+\d+.*)', line.strip()):
-                      processed_lines.append(line)
-                  
-                  i += 1
-              
-              processed_content = '\n'.join(processed_lines)
-              
-              return processed_content
-          
-          def fix_wave_symbols(content):
-              """修复波浪号和特殊符号问题，但保持波浪号不变"""
-              # 修复常见的数字范围符号错误
-              # 修复（0,100）格式的问题
-              content = re.sub(r'（0,100）', '（0~100）', content)
-              # 修复（0.100）格式的问题
-              content = re.sub(r'（0\.100）', '（0~100）', content)
-              # 修复@符号错误（如0@100应为0~100）
-              content = re.sub(r'(\d+)@(\d+)', r'\1~\2', content)
-              # 修复:符号错误（如0:100应为0~100）
-              content = re.sub(r'(\d+):(\d+)', r'\1~\2', content)
-              
-              # 特别注意：不要将波浪号(~)替换为其他内容，保持原样
-              # LaTeX会在后续处理中正确处理波浪号
-              
-              return content
-          
-          def preserve_special_links(content):
-              """保护特殊格式的链接，如<https://...>，使其保持为普通文本"""
-              # 匹配<https://...>或<http://...>格式的链接
-              url_pattern = re.compile(r'<(https?://[^>]+)>')
-              
-              def replace_url(match):
-                  url = match.group(1)
-                  return f'`{url}`'  # 用反引号包裹，使其成为内联代码
-              
-              protected_content = url_pattern.sub(replace_url, content)
-              
-              return protected_content
-          
-          def fix_text_code_blocks(content):
-              """修复text代码块中的换行问题"""
-              # 匹配```text代码块
-              text_pattern = re.compile(r'```text\n(.*?)\n```', re.DOTALL)
-              
-              def fix_text_content(match):
-                  text_content = match.group(1)
-                  # 将长行分割为较短的行
-                  lines = text_content.split('\n')
-                  fixed_lines = []
-                  
-                  for line in lines:
-                      if len(line) > 80:  # 如果行太长
-                          # 在合适的位置分割（尝试在空格处分割）
-                          while len(line) > 80:
-                              # 从第80个字符往前找空格
-                              split_pos = line[:80].rfind(' ')
-                              if split_pos == -1:
-                                  split_pos = 80
-                              fixed_lines.append(line[:split_pos].rstrip())
-                              line = line[split_pos:].lstrip()
-                          if line:
-                              fixed_lines.append(line)
-                      else:
-                          fixed_lines.append(line)
-                  
-                  fixed_content = '\n'.join(fixed_lines)
-                  return f'```text\n{fixed_content}\n```'
-              
-              return text_pattern.sub(fix_text_content, content)
-          
-          def process_markdown_file(filepath):
-              print(f"处理文件: {filepath}")
-              try:
-                  with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                      content = f.read()
-                  
-                  # 1. 保护代码块、内联代码和引用块
-                  protected_content, code_blocks, inline_code_blocks, quote_blocks = protect_code_blocks(content)
-                  
-                  # 2. 修复text代码块中的换行问题
-                  protected_content = fix_text_code_blocks(protected_content)
-                  
-                  # 3. 保护特殊格式的链接
-                  protected_content = preserve_special_links(protected_content)
-                  
-                  # 4. 处理非表格内的图片，确保正确位置
-                  processed_content = process_images_in_content(protected_content)
-                  
-                  # 5. 移除图片标签和<center>标签
-                  processed_content = remove_image_labels_and_figures(processed_content)
-                  
-                  # 6. 修复波浪号和特殊符号问题
-                  processed_content = fix_wave_symbols(processed_content)
-                  
-                  # 7. 处理链接标签（不处理代码块中的）
-                  link_pattern = re.compile(r'<a\s+([^>]+)>(.*?)</a>', re.IGNORECASE | re.DOTALL)
-                  
-                  def replace_link_tag(match):
-                      attrs_str = match.group(1)
-                      link_text = match.group(2).strip()
-                      
-                      href_match = re.search(r'href\s*=\s*["\']([^"\']+)["\']', attrs_str)
-                      if href_match:
-                          href = href_match.group(1)
-                          return f'[{link_text}]({href})'
-                      return link_text
-                  
-                  processed_content = link_pattern.sub(replace_link_tag, processed_content)
-                  
-                  # 8. 移除其他HTML标签（不处理代码块中的）
-                  # 小心处理，避免移除代码中的<>
-                  processed_content = re.sub(r'<(?!@@@CODE_BLOCK_|@@@INLINE_CODE_|@@@QUOTE_BLOCK_)(?!\/?code>)(?!\/?pre>)(?!\/?span>)(?!\/?div>)(?!\/?p>)(?!\/?br>)[^>]+>', '', processed_content)
-                  
-                  # 9. 恢复代码块
-                  final_content = restore_code_blocks(processed_content, code_blocks, inline_code_blocks, quote_blocks)
-                  
-                  # 保存处理后的文件
-                  with open(filepath, 'w', encoding='utf-8') as f:
-                      f.write(final_content)
-                      
-                  return True
-              except Exception as e:
-                  print(f"处理失败 {filepath}: {e}")
-                  import traceback
-                  traceback.print_exc()
-                  return False
-          
-          # 遍历所有Markdown文件
-          processed = 0
-          for root, dirs, files in os.walk('.'):
-              # 跳过特定目录
-              skip_dirs = ['.git', 'pdf_output', '__pycache__', '.github', 'node_modules']
-              dirs[:] = [d for d in dirs if d not in skip_dirs]
-              
-              for file in files:
-                  if file.endswith('.md'):
-                      filepath = os.path.join(root, file)
-                      if process_markdown_file(filepath):
-                          processed += 1
-          
-          print(f"处理完成: {processed} 个文件")
-          EOF
-          
-          python3 convert_html_enhanced.py
-      
-      - name: "Create enhanced LaTeX template"
-        run: |
-          cat > header.tex << 'EOF'
-          \usepackage{xeCJK}
-          \usepackage[UTF8]{ctex}
-          \setCJKmainfont{Noto Serif CJK SC}
-          \setCJKsansfont{Noto Sans CJK SC}
-          \setCJKmonofont{Noto Sans Mono CJK SC}
-          
-          \usepackage[margin=1.2in]{geometry}
-          
-          \usepackage{hyperref}
-          \hypersetup{
-            colorlinks=true,
-            linkcolor=blue,
-            urlcolor=blue,
-            citecolor=blue,
-            pdfborder={0 0 0},
-          }
-          
-          \usepackage{listings}
-          \usepackage{xcolor}
-          \usepackage{graphicx}
-          \usepackage{float}
-          \usepackage{placeins} % 用于控制浮动体位置
-          \usepackage{mdframed} % 用于创建带背景的引用块
-          \usepackage{xspace} % 用于正确处理波浪号
-          
-          \definecolor{codebg}{rgb}{0.98,0.98,0.98}
-          \definecolor{framecolor}{rgb}{0.8,0.8,0.8}
-          \definecolor{quotebg}{rgb}{0.97,0.97,0.97}
-          \definecolor{quoteframe}{rgb}{0.85,0.85,0.85}
-          
-          % 代码块设置 - 增大字体并确保自动换行
-          \lstset{
-            basicstyle=\ttfamily\normalsize\selectfont, % 增大字体大小
-            backgroundcolor=\color{codebg},
-            frame=single,
-            framesep=8pt, % 增加内边距
-            framerule=1pt, % 边框稍粗
-            rulecolor=\color{framecolor},
-            breaklines=true,
-            breakatwhitespace=true,
-            breakautoindent=true,
-            breakindent=25pt, % 增加换行缩进
-            postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
-            showstringspaces=false,
-            tabsize=2,
-            numbers=none,
-            xleftmargin=15pt,
-            xrightmargin=15pt,
-            upquote=true,
-            columns=fullflexible,
-            keepspaces=false, % 修改为false以允许换行
-            escapeinside={(*@}{@*)}, % 允许在代码块中插入LaTeX命令
-            lineskip=2pt, % 增加行间距
-            literate={~}{{\textasciitilde}}1, % 正确处理波浪号
-            breaklines=true, % 强制换行
-            prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
-            prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookleftarrow}}, % 更好的换行标记
-          }
-          
-          % 特殊处理text代码块 - 优化自动换行
-          \lstdefinestyle{textstyle}{
-            basicstyle=\ttfamily\normalsize\selectfont, % 增大字体
-            backgroundcolor=\color{codebg},
-            frame=single,
-            framesep=8pt,
-            framerule=1pt,
-            rulecolor=\color{framecolor},
-            breaklines=true,
-            breakatwhitespace=true,
-            breakautoindent=true,
-            breakindent=25pt, % 增加换行缩进
-            postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
-            showstringspaces=false,
-            tabsize=2,
-            numbers=none,
-            xleftmargin=15pt,
-            xrightmargin=15pt,
-            upquote=true,
-            columns=fullflexible,
-            keepspaces=false, % 修改为false以允许换行
-            escapeinside={},
-            lineskip=2pt, % 增加行间距
-            literate={~}{{\textasciitilde}}1, % 正确处理波浪号
-            breaklines=true, % 强制换行
-            prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
-            prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookleftarrow}}, % 更好的换行标记
-          }
-          
-          % 引用块设置
-          \newmdenv[
-            backgroundcolor=quotebg,
-            linecolor=quoteframe,
-            linewidth=1pt,
-            roundcorner=5pt,
-            innerleftmargin=12pt,
-            innerrightmargin=12pt,
-            innertopmargin=8pt,
-            innerbottommargin=8pt,
-            skipabove=6pt,
-            skipbelow=6pt,
-            frametitleaboveskip=6pt,
-            frametitlebelowskip=6pt
-          ]{quotebox}
-          
-          % 设置图片浮动参数，确保图片在正确位置
-          \usepackage{float}
-          \floatplacement{figure}{H} % 强制图片在当前位置
-          
-          % 设置水平线样式
-          \usepackage{booktabs}
-          \newcommand{\HRule}{\rule{\linewidth}{0.5mm}} % 定义水平线命令
-          
-          \usepackage{parskip}
-          \setlength{\parindent}{0pt}
-          \setlength{\parskip}{0.8em}
-          
-          \sloppy
-          \emergencystretch=3em
-          
-          \usepackage{eso-pic}
-          \usepackage{tikz}
-          \usetikzlibrary{calc}
-          
-          \newcommand\BackgroundPicture{%
-            \begin{tikzpicture}[remember picture,overlay]
-              \coordinate (page center) at (current page.center);
-              \pgfmathsetmacro{\pagewidth}{\paperwidth}
-              \pgfmathsetmacro{\pageheight}{\paperheight}
-              
-              \pgfmathsetmacro{\hcount}{3}
-              \pgfmathsetmacro{\vcount}{5}
-              \pgfmathsetmacro{\hspace}{\paperwidth/(\hcount+1)}
-              \pgfmathsetmacro{\vspace}{\paperheight/(\vcount+1)}
-              
-              \foreach \i in {1,...,\hcount} {
-                \foreach \j in {1,...,\vcount} {
-                  \pgfmathsetmacro{\x}{-\paperwidth/2 + \i*\hspace}
-                  \pgfmathsetmacro{\y}{-\paperheight/2 + \j*\vspace}
-                  
-                  \node at ($(page center) + (\x pt, \y pt)$) [
-                    rotate=45,
-                    scale=1.5,
-                    text=gray!30,
-                    opacity=0.4,
-                    font=\sffamily\bfseries\small
-                  ] {emakefun};
-                }
-              }
-              
-              \node at (page center) [
-                rotate=45,
-                scale=3,
-                text=gray!30,
-                opacity=0.6,
-                font=\sffamily\bfseries
-              ] {emakefun};
-            \end{tikzpicture}%
-          }
-          
-          \AddToShipoutPictureBG{\BackgroundPicture}
-          
-          % 图片处理设置
-          \graphicspath{{./}{./resource/}}
-          
-          % 设置图片最大宽度为行宽，并居中
-          \makeatletter
-          \def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
-          \makeatother
-          
-          \let\oldincludegraphics\includegraphics
-          \renewcommand{\includegraphics}[2][]{%
-            \begingroup
-            \centering
-            \oldincludegraphics[#1,width=\maxwidth]{#2}%
-            \endgroup
-          }
-          
-          % 防止生成目录
-          \usepackage{titletoc}
-          \setcounter{tocdepth}{-1}
-          
-          % Pandoc过滤器：处理引用块
-          \usepackage{fvextra}
-          \usepackage{csquotes}
-          
-          % 自定义Markdown到LaTeX的转换
-          \newcommand{\quoteblock}[1]{%
-            \begin{quotebox}
-            #1
-            \end{quotebox}
-          }
-          
-          % 在普通文本中正确处理波浪号
-          \catcode`\~=12
-          \AtBeginDocument{\catcode`\~=12 }
-          EOF
-      
-      - name: "Create Pandoc filter for enhanced processing"
-        run: |
-          cat > quote-filter.lua << 'EOF'
-          function Block(el)
-            -- 处理引用块
-            if el.t == "BlockQuote" then
-              local content = ""
-              for i, item in ipairs(el.content) do
-                content = content .. pandoc.write(pandoc.Pandoc({item}), "latex")
-              end
-              return pandoc.RawBlock('latex', '\\begin{quotebox}\n' .. content .. '\\end{quotebox}')
-            end
-            
-            -- 处理水平线
-            if el.t == "HorizontalRule" then
-              return pandoc.RawBlock('latex', '\\vspace{0.5em}\\HRule\\vspace{0.5em}')
-            end
-            
-            return el
-          end
-          
-          function CodeBlock(el)
-            -- 处理代码块，如果是text类型则使用特殊样式
-            if el.classes[1] == "text" then
-              return pandoc.RawBlock('latex', 
-                '\\begin{lstlisting}[style=textstyle]\n' .. 
-                el.text .. 
-                '\n\\end{lstlisting}')
-            end
-            return el
-          end
-          
-          function Str(el)
-            -- 处理特殊字符
-            local text = el.text
-            
-            -- 修复特殊格式的数字范围问题，但不修改波浪号本身
-            text = text:gsub('（0,100）', '（0~100）')
-            text = text:gsub('（0%.100）', '（0~100）')
-            text = text:gsub('（(%d+)[.,](%d%d%d）', '（%1~%2）')
-            text = text:gsub('(%d+)@(%d+)', '%1~%2')
-            text = text:gsub('(%d+):(%d+)', '%1~%2')
-            
-            return pandoc.Str(text)
-          end
-          
-          function Code(el)
-            -- 处理内联代码，保持波浪号不变
-            return el
-          end
-          EOF
-      
-      - name: "Set up output directory"
-        run: |
-          mkdir -p pdf_output
-      
-      - name: "Convert Markdown to PDF with enhanced settings"
-        run: |
-          MD_FILES=$(find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" -not -path "./pdf_output/*" | sed 's/^\.\///')
-          
-          IFS=$'\n'
-          converted_count=0
-          failed_count=0
-          
-          CURRENT_DATE=$(date '+%Y-%m-%d')
-          
-          for md_file in $MD_FILES; do
-            [ -z "$md_file" ] && continue
-            
-            echo "========================================"
-            echo "处理文件: $md_file"
-            echo "========================================"
-            
-            dir_name=$(dirname "$md_file")
-            base_name=$(basename "$md_file" .md)
-            
-            # 只创建PDF输出目录
-            mkdir -p "pdf_output/$dir_name"
-            
-            # 获取markdown文件所在目录
-            md_dir=$(dirname "$md_file")
-            
-            # 构建资源路径
-            resource_paths="$md_dir:$md_dir/../resource:.:./resource"
-            
-            echo "资源路径: $resource_paths"
-            
-            set +e
-            
-            # 转换PDF - 使用增强设置
-            echo "开始转换PDF..."
-            
-            # 构建Pandoc命令
-            pandoc "$md_file" \
-              --resource-path="$resource_paths" \
-              -o "pdf_output/$dir_name/$base_name.pdf" \
-              --pdf-engine=xelatex \
-              --listings \
-              --include-in-header=header.tex \
-              --lua-filter=quote-filter.lua \
-              -V mainfont="Noto Serif CJK SC" \
-              -V sansfont="Noto Sans CJK SC" \
-              -V monofont="Noto Sans Mono CJK SC" \
-              -V geometry:margin=1.2in \
-              -V geometry:a4paper \
-              -V colorlinks=true \
-              -V linkcolor=blue \
-              -V urlcolor=blue \
-              --wrap=auto \
-              --highlight-style=tango \
-              -f markdown \
-              -M date="$CURRENT_DATE" \
-              2>&1 | tee conversion.log
-              
-            conversion_status=$?
-            
-            set -e
-            
-            # 检查转换是否成功
-            if [ $conversion_status -eq 0 ] && [ -f "pdf_output/$dir_name/$base_name.pdf" ] && [ -s "pdf_output/$dir_name/$base_name.pdf" ]; then
-              echo "✓ 成功转换: $md_file"
-              converted_count=$((converted_count + 1))
-              
-              # 检查PDF文件大小
-              pdf_size=$(du -h "pdf_output/$dir_name/$base_name.pdf" | cut -f1)
-              echo "PDF文件大小: $pdf_size"
-            else
-              echo "✗ 转换失败: $md_file"
-              failed_count=$((failed_count + 1))
-              
-              if [ -f "conversion.log" ]; then
-                echo "转换日志:"
-                tail -50 conversion.log
-              fi
-            fi
-            
-            rm -f conversion.log 2>/dev/null || true
-            
-            echo ""
-          done
-          
-          echo "========================================"
-          echo "转换汇总: $converted_count 成功, $failed_count 失败"
-          echo "========================================"
-          
-          if [ $converted_count -eq 0 ] && [ $failed_count -gt 0 ]; then
-            echo "所有转换都失败了!"
-            exit 1
-          fi
-      
-      - name: "Copy resource directories to output"
-        run: |
-          echo "复制resource目录到输出目录..."
-          
-          # 查找所有有PDF文件的目录，只复制resource目录
-          find pdf_output -name "*.pdf" -type f | while read pdf_file; do
-            pdf_dir=$(dirname "$pdf_file")
-            rel_dir=${pdf_dir#pdf_output/}
-            
-            # 复制resource目录
-            if [ -d "$rel_dir/resource" ]; then
-              echo "复制 $rel_dir/resource 到 $pdf_dir/"
-              cp -r "$rel_dir/resource" "$pdf_dir/" 2>/dev/null || echo "无法复制 $rel_dir/resource"
-            fi
-          done
-      
-      - name: "Verify PDF files"
-        run: |
-          total_pdfs=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
-          
-          if [ $total_pdfs -eq 0 ]; then
-            echo "没有生成PDF文件!"
-            exit 1
-          else
-            echo "总共生成 $total_pdfs 个PDF文件"
-            
-            # 显示总大小
-            total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; | awk '{sum+=$1} END {print int(sum/1024/1024)}')
-            echo "PDF文件总大小: ${total_size_mb}MB"
-            
-            echo "前10个最大的PDF文件:"
-            find pdf_output -name "*.pdf" -type f -exec du -h {} \; | sort -rh | head -10
-          fi
-      
-      - name: "Create release documentation"
-        run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            TAG_NAME="${GITHUB_REF#refs/tags/}"
-          else
-            TAG_NAME="latest"
-          fi
-          
-          echo "# PDF 文档集" > pdf_output/README.md
-          echo "" >> pdf_output/README.md
-          echo "生成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> pdf_output/README.md
-          echo "已优化功能：" >> pdf_output/README.md
-          echo "1. 保护代码块内容，避免<>被移除" >> pdf_output/README.md
-          echo "2. 图片位置固定，避免浮动错位" >> pdf_output/README.md
-          echo "3. 表格内图片保持原样显示" >> pdf_output/README.md
-          echo "4. 代码块字体增大，自动换行优化" >> pdf_output/README.md
-          echo "5. 添加平铺式 'emakefun' 水印" >> pdf_output/README.md
-          echo "6. 完全移除非表格内图片标签（图x:）" >> pdf_output/README.md
-          echo "7. 修复特殊字符问题（如0100->0~100）" >> pdf_output/README.md
-          echo "8. 修复波浪号(~)正常显示" >> pdf_output/README.md
-          echo "9. 特殊格式链接转为内联代码" >> pdf_output/README.md
-          echo "10. 为引用块添加底色框" >> pdf_output/README.md
-          echo "11. 修复text文本框换行问题" >> pdf_output/README.md
-          echo "12. 优化水平线显示" >> pdf_output/README.md
-          echo "13. 不输出picture文件夹，只保留resource文件夹" >> pdf_output/README.md
-          echo "" >> pdf_output/README.md
-          
-          echo "## 文件列表" >> pdf_output/README.md
-          echo "" >> pdf_output/README.md
-          
-          PDF_COUNT=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
-          
-          current_dir=""
-          find pdf_output -name "*.pdf" -type f | sort | while read pdf_file; do
-            rel_path=${pdf_file#pdf_output/}
-            dir_name=$(dirname "$rel_path")
-            file_name=$(basename "$rel_path")
-            file_size=$(du -h "$pdf_file" | cut -f1)
-            
-            if [ "$current_dir" != "$dir_name" ]; then
-              current_dir="$dir_name"
-              if [ "$dir_name" != "." ]; then
-                echo "### $dir_name/" >> pdf_output/README.md
-                echo "" >> pdf_output/README.md
-              fi
-            fi
-            
-            # 检查是否有resource目录
-            pdf_dir=$(dirname "$pdf_file")
-            resource_exists=""
-            if [ -d "$pdf_dir/resource" ]; then
-              resource_exists=" (含resource资源)"
-            fi
-            
-            echo "- [$file_name]($rel_path) ($file_size)$resource_exists" >> pdf_output/README.md
-          done
-          
-          echo "" >> pdf_output/README.md
-          total_size_mb=$(find pdf_output -name "*.pdf" -type f -exec stat -c%s {} \; | awk '{sum+=$1} END {print int(sum/1024/1024)}')
-          
-          # 统计有resource目录的PDF数量
-          resource_dirs_count=$(find pdf_output -type d -name "resource" 2>/dev/null | wc -l)
-          
-          echo "总计: $PDF_COUNT 个 PDF 文件, 总大小约 ${total_size_mb}MB, ${resource_dirs_count} 个目录包含resource资源" >> pdf_output/README.md
-      
-      - name: "Create zip archive for release"
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          TAG_NAME="${GITHUB_REF#refs/tags/}"
-          
-          cd pdf_output
-          zip -r "../pdf-documents-$TAG_NAME.zip" .
-          cd ..
-      
-      - name: "Upload PDF artifacts"
-        uses: actions/upload-artifact@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          name: pdf-documents
-          path: |
-            pdf_output/
-            pdf-documents-*.zip
-          retention-days: 7
+          node-version: '18'
       
-      - name: "Create GitHub Release"
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Install markdown-pdf and dependencies
+        run: |
+          npm install -g markdown-pdf
+          npm install -g @iktakahiro/markdown-pdf  # 备用工具
+          # 安装额外的依赖（如果需要处理图片）
+          sudo apt-get update
+          sudo apt-get install -y pandoc texlive-xetex texlive-fonts-recommended texlive-latex-extra
+      
+      - name: Find all markdown files
+        id: find-md
+        run: |
+          # 查找所有.md文件，排除node_modules等目录
+          find . -name "*.md" -not -path "./node_modules/*" -not -path "./.git/*" > md-files.txt
+          echo "Found $(wc -l < md-files.txt) markdown files"
+          
+          # 创建输出目录
+          mkdir -p pdf-output
+      
+      - name: Convert markdown to PDF
+        run: |
+          while IFS= read -r md_file; do
+            echo "Converting: $md_file"
+            
+            # 获取相对路径并创建对应的PDF输出路径
+            relative_path="${md_file#./}"
+            pdf_path="pdf-output/${relative_path%.md}.pdf"
+            
+            # 创建PDF文件的目录结构
+            mkdir -p "$(dirname "$pdf_path")"
+            
+            # 使用markdown-pdf转换
+            # 注意：这里可以根据需要调整markdown-pdf的选项
+            # --css-path 可以指定自定义CSS样式
+            # --paper-format A4 --paper-orientation portrait 设置纸张
+            
+            # 方案1: 使用markdown-pdf（npm包）
+            markdown-pdf \
+              --paper-format A4 \
+              --paper-orientation portrait \
+              --paper-border 2cm \
+              --css-path .github/workflows/pdf-styles.css 2>/dev/null \
+              "$md_file" \
+              "$pdf_path" \
+              || echo "markdown-pdf failed for $md_file, trying alternative method..."
+            
+            # 如果markdown-pdf失败，尝试使用pandoc作为备选方案
+            if [ ! -f "$pdf_path" ] || [ ! -s "$pdf_path" ]; then
+              echo "Using pandoc as fallback for $md_file"
+              pandoc "$md_file" -o "$pdf_path" --pdf-engine=xelatex \
+                -V geometry:a4paper \
+                -V geometry:margin=2cm \
+                -V mainfont="DejaVu Sans" \
+                -V monofont="DejaVu Sans Mono"
+            fi
+            
+            # 检查PDF是否生成成功
+            if [ -f "$pdf_path" ] && [ -s "$pdf_path" ]; then
+              echo "✓ Successfully converted to $pdf_path"
+            else
+              echo "✗ Failed to convert $md_file"
+            fi
+            
+          done < md-files.txt
+      
+      - name: Create PDF bundle
+        run: |
+          # 创建一个包含所有PDF的压缩包
+          cd pdf-output
+          zip -r "../all-pdfs-$(date +%Y%m%d-%H%M%S).zip" .
+          cd ..
+          
+          # 计算生成的文件数量
+          pdf_count=$(find pdf-output -name "*.pdf" | wc -l)
+          echo "pdf_count=$pdf_count" >> $GITHUB_ENV
+          
+          # 将最新生成的zip文件设为输出
+          echo "pdf_zip=$(ls -t all-pdfs-*.zip | head -1)" >> $GITHUB_ENV
+      
+      - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
         with:
-          tag_name: ${{ github.ref_name }}
-          name: "PDF Documents - ${{ github.ref_name }}"
-          body_path: pdf_output/README.md
-          files: |
-            pdf-documents-${{ github.ref_name }}.zip
+          name: Documentation v${{ github.ref_name }}
+          body: |
+            # Documentation PDFs
+            
+            This release contains PDF versions of all markdown documentation.
+            
+            **Generated on:** ${{ fromJSON(format('["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]'))[fromJSON('{0,1,2,3,4,5,6,7,8,9,10,11}')] }} ${{ fromJSON(format('["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26","27","28","29","30","31"]'))[fromJSON('{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31}')] }}, ${{ fromJSON('2024') }}
+            
+            **Contents:**
+            - ${{ env.pdf_count }} PDF files bundled in `${{ env.pdf_zip }}`
+            - Individual PDF files for each markdown document
+            
+            **Tag:** ${{ github.ref_name }}
+            
+            **Commit:** ${{ github.sha }}
+          
           draft: false
           prerelease: false
-          generate_release_notes: true
+          files: |
+            ${{ env.pdf_zip }}
+            pdf-output/**/*.pdf
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Upload PDFs as artifacts (for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-pdfs
+          path: |
+            pdf-output/
+            ${{ env.pdf_zip }}
+          retention-days: 7
