@@ -1,4 +1,4 @@
-name: "Markdown to PDF Converter with Tiled Watermark - Enhanced Fix"
+name: "Markdown to PDF Converter with Tiled Watermark - Enhanced Fix for Text Code Blocks"
 
 on:
   push:
@@ -54,29 +54,19 @@ jobs:
           def protect_code_blocks(content):
               """保护代码块，防止被HTML转换处理"""
               code_blocks = []
-              text_code_blocks = []
-              inline_code_blocks = []
-              quote_blocks = []
               protected_content = content
               
-              # 1. 先保护text代码块
-              def replace_text_code_block(match):
-                  text_code_blocks.append(match.group(0))
-                  return f"@@@TEXT_CODE_BLOCK_{len(text_code_blocks)-1}@@@"
-              
-              text_code_pattern = re.compile(r'```text\n(.*?)\n```', re.DOTALL)
-              protected_content = text_code_pattern.sub(replace_text_code_block, protected_content)
-              
-              # 2. 保护其他代码块（非text）
+              # 保护代码块（```code```格式）
               def replace_code_block(match):
                   code_blocks.append(match.group(0))
                   return f"@@@CODE_BLOCK_{len(code_blocks)-1}@@@"
               
-              # 匹配非text的代码块
-              code_pattern = re.compile(r'```(?!text)(?:[a-zA-Z0-9_+-]*\n)?.*?\n```', re.DOTALL)
+              # 匹配标准的Markdown代码块
+              code_pattern = re.compile(r'```(?:[a-zA-Z0-9_+-]*\n)?.*?\n```', re.DOTALL)
               protected_content = code_pattern.sub(replace_code_block, protected_content)
               
-              # 3. 保护内联代码（`code`格式）
+              # 保护内联代码（`code`格式）
+              inline_code_blocks = []
               def replace_inline_code(match):
                   inline_code_blocks.append(match.group(0))
                   return f"@@@INLINE_CODE_{len(inline_code_blocks)-1}@@@"
@@ -84,7 +74,8 @@ jobs:
               inline_pattern = re.compile(r'`[^`\n]+`')
               protected_content = inline_pattern.sub(replace_inline_code, protected_content)
               
-              # 4. 保护引用块（> 开头的内容）
+              # 保护引用块（> 开头的内容）
+              quote_blocks = []
               def replace_quote_block(match):
                   quote_blocks.append(match.group(0))
                   return f"@@@QUOTE_BLOCK_{len(quote_blocks)-1}@@@"
@@ -93,18 +84,13 @@ jobs:
               quote_pattern = re.compile(r'^(?:>.*\n?)+', re.MULTILINE)
               protected_content = quote_pattern.sub(replace_quote_block, protected_content)
               
-              return protected_content, code_blocks, text_code_blocks, inline_code_blocks, quote_blocks
+              return protected_content, code_blocks, inline_code_blocks, quote_blocks
           
-          def restore_code_blocks(content, code_blocks, text_code_blocks, inline_code_blocks, quote_blocks):
+          def restore_code_blocks(content, code_blocks, inline_code_blocks, quote_blocks):
               """恢复保护的代码块"""
               restored_content = content
               
-              # 恢复text代码块
-              for i, text_code_block in enumerate(text_code_blocks):
-                  placeholder = f"@@@TEXT_CODE_BLOCK_{i}@@@"
-                  restored_content = restored_content.replace(placeholder, text_code_block)
-              
-              # 恢复其他代码块
+              # 恢复代码块
               for i, code_block in enumerate(code_blocks):
                   placeholder = f"@@@CODE_BLOCK_{i}@@@"
                   restored_content = restored_content.replace(placeholder, code_block)
@@ -299,18 +285,28 @@ jobs:
                   fixed_lines = []
                   
                   for line in lines:
-                      if len(line) > 80:  # 如果行太长
-                          # 在合适的位置分割，优先在空格处分割
-                          while len(line) > 80:
-                              # 查找前80个字符内最后一个空格
-                              split_point = line[:80].rfind(' ')
-                              if split_point == -1:  # 没有空格，强制在80字符处分割
-                                  split_point = 80
-                              
-                              fixed_lines.append(line[:split_point])
-                              line = line[split_point:].strip()
-                          if line:  # 剩余部分
-                              fixed_lines.append(line)
+                      if len(line) > 80:  # 如果行太长（针对text代码块）
+                          # 在合适的位置分割，优先在标点符号后分割
+                          # 对于中文文本，在标点后分割
+                          punctuation_pattern = r'([，。；！？、])'
+                          parts = re.split(punctuation_pattern, line)
+                          current_line = ''
+                          
+                          for i in range(0, len(parts), 2):
+                              if i < len(parts):
+                                  segment = parts[i]
+                                  if i+1 < len(parts):
+                                      segment += parts[i+1]
+                                  
+                                  if len(current_line) + len(segment) > 80:
+                                      if current_line:
+                                          fixed_lines.append(current_line)
+                                      current_line = segment
+                                  else:
+                                      current_line += segment
+                          
+                          if current_line:
+                              fixed_lines.append(current_line)
                       else:
                           fixed_lines.append(line)
                   
@@ -325,11 +321,11 @@ jobs:
                   with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                       content = f.read()
                   
-                  # 1. 修复text代码块中的换行问题
-                  content = fix_text_code_blocks(content)
+                  # 1. 保护代码块、内联代码和引用块
+                  protected_content, code_blocks, inline_code_blocks, quote_blocks = protect_code_blocks(content)
                   
-                  # 2. 保护代码块、内联代码和引用块
-                  protected_content, code_blocks, text_code_blocks, inline_code_blocks, quote_blocks = protect_code_blocks(content)
+                  # 2. 修复text代码块中的换行问题
+                  protected_content = fix_text_code_blocks(protected_content)
                   
                   # 3. 保护特殊格式的链接
                   protected_content = preserve_special_links(protected_content)
@@ -362,10 +358,11 @@ jobs:
                   processed_content = link_pattern.sub(replace_link_tag, processed_content)
                   
                   # 9. 移除其他HTML标签（不处理代码块中的）
-                  processed_content = re.sub(r'<(?!@@@CODE_BLOCK_|@@@TEXT_CODE_BLOCK_|@@@INLINE_CODE_|@@@QUOTE_BLOCK_)(?!URL_PLACEHOLDER)(?!\/?code>)(?!\/?pre>)(?!\/?span>)(?!\/?div>)(?!\/?p>)(?!\/?br>)[^>]+>', '', processed_content)
+                  # 小心处理，避免移除代码中的<>
+                  processed_content = re.sub(r'<(?!@@@CODE_BLOCK_|@@@INLINE_CODE_|@@@QUOTE_BLOCK_)(?!\/?code>)(?!\/?pre>)(?!\/?span>)(?!\/?div>)(?!\/?p>)(?!\/?br>)[^>]+>', '', processed_content)
                   
                   # 10. 恢复代码块
-                  final_content = restore_code_blocks(processed_content, code_blocks, text_code_blocks, inline_code_blocks, quote_blocks)
+                  final_content = restore_code_blocks(processed_content, code_blocks, inline_code_blocks, quote_blocks)
                   
                   # 保存处理后的文件
                   with open(filepath, 'w', encoding='utf-8') as f:
@@ -396,7 +393,7 @@ jobs:
           
           python3 convert_html_enhanced.py
       
-      - name: "Create enhanced LaTeX template"
+      - name: "Create enhanced LaTeX template with improved text code block handling"
         run: |
           cat > header.tex << 'EOF'
           \usepackage{xeCJK}
@@ -457,19 +454,19 @@ jobs:
             prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
           }
           
-          % 特殊处理text代码块 - 优化自动换行
+          % 特殊处理text代码块 - 优化自动换行，特别针对中文
           \lstdefinestyle{textstyle}{
-            basicstyle=\ttfamily\small\selectfont, % 使用小号字体
+            basicstyle=\ttfamily\normalsize\selectfont, % 增大字体
             backgroundcolor=\color{codebg},
             frame=single,
             framesep=8pt,
             framerule=1pt,
             rulecolor=\color{framecolor},
             breaklines=true,
-            breakatwhitespace=true,
+            breakatwhitespace=false, % 允许在任意字符处换行，包括中文字符
             breakautoindent=true,
             breakindent=25pt, % 增加换行缩进
-            postbreak=\mbox{\textcolor{gray}{$\hookrightarrow$}\space},
+            postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
             showstringspaces=false,
             tabsize=2,
             numbers=none,
@@ -478,13 +475,18 @@ jobs:
             upquote=true,
             columns=fullflexible,
             keepspaces=true,
-            lineskip=3pt, % 增加行间距
+            escapeinside={},
+            lineskip=2pt, % 增加行间距
             literate={~}{{\textasciitilde}}1, % 正确处理波浪号
             breaklines=true, % 强制换行
-            prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookleftarrow}},
-            captionpos=b,
-            abovecaptionskip=5pt,
-            belowcaptionskip=5pt,
+            prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
+            extendedchars=true, % 支持扩展字符
+            breakanywhere=true, % 允许在任何位置断行（重要！）
+            breakanywheresymbolpre={}, % 断行前不添加符号
+            breakanywheresymbolpost={}, % 断行后不添加符号
+            % 中文断行优化
+            prebreak={\hbox{}}, % 中文换行优化
+            postbreak={\hbox{}}, % 中文换行优化
           }
           
           % 引用块设置
@@ -596,7 +598,7 @@ jobs:
           }
           EOF
       
-      - name: "Create Pandoc filter for enhanced processing"
+      - name: "Create Pandoc filter with enhanced text code block processing"
         run: |
           cat > quote-filter.lua << 'EOF'
           function Block(el)
@@ -620,9 +622,16 @@ jobs:
           function CodeBlock(el)
             -- 处理代码块，如果是text类型则使用特殊样式
             if el.classes[1] == "text" then
+              -- 对text代码块使用特殊的换行处理
+              local content = el.text
+              
+              -- 在中文文本中插入零宽度空格，帮助LaTeX正确断行
+              content = content:gsub("([\228-\233][\128-\191]-)([\228-\233][\128-\191]-)", "%1\\hspace{0pt}%2")
+              
+              -- 使用textstyle，并启用强制换行和中文断行支持
               return pandoc.RawBlock('latex', 
-                '\\begin{lstlisting}[style=textstyle]\n' .. 
-                el.text .. 
+                '\\begin{lstlisting}[style=textstyle,breaklines=true,breakatwhitespace=false,breakanywhere=true]\n' .. 
+                content .. 
                 '\n\\end{lstlisting}')
             end
             return el
@@ -649,13 +658,21 @@ jobs:
             text = text:gsub('~', '\\textasciitilde{}')
             return pandoc.Code(text)
           end
+          
+          -- 添加对中文断行的特殊支持
+          function Meta(meta)
+            -- 添加中文断行支持
+            meta["CJKoptions"] = pandoc.MetaInlines({pandoc.Str("BreakAfterSymbols=true")})
+            meta["xeCJKenbreak"] = pandoc.MetaBool(true)
+            return meta
+          end
           EOF
       
       - name: "Set up output directory"
         run: |
           mkdir -p pdf_output
       
-      - name: "Convert Markdown to PDF with enhanced settings"
+      - name: "Convert Markdown to PDF with enhanced text code block handling"
         run: |
           MD_FILES=$(find . -name "*.md" -not -path "./.*" -not -path "*/node_modules/*" -not -path "./pdf_output/*" | sed 's/^\.\///')
           
@@ -688,10 +705,10 @@ jobs:
             
             set +e
             
-            # 转换PDF - 使用增强设置
+            # 转换PDF - 使用增强设置，特别针对text代码块
             echo "开始转换PDF..."
             
-            # 构建Pandoc命令
+            # 构建Pandoc命令，添加中文断行优化
             pandoc "$md_file" \
               --resource-path="$resource_paths" \
               -o "pdf_output/$dir_name/$base_name.pdf" \
@@ -707,10 +724,15 @@ jobs:
               -V colorlinks=true \
               -V linkcolor=blue \
               -V urlcolor=blue \
+              -V CJKmainfont="Noto Serif CJK SC" \
+              -V CJKsansfont="Noto Sans CJK SC" \
+              -V CJKmonofont="Noto Sans Mono CJK SC" \
+              -V CJKoptions="BreakAfterSymbols=true" \
               --wrap=auto \
               --highlight-style=tango \
               -f markdown \
               -M date="$CURRENT_DATE" \
+              --variable="xeCJKenbreak=true" \
               2>&1 | tee conversion.log
               
             conversion_status=$?
@@ -725,6 +747,12 @@ jobs:
               # 检查PDF文件大小
               pdf_size=$(du -h "pdf_output/$dir_name/$base_name.pdf" | cut -f1)
               echo "PDF文件大小: $pdf_size"
+              
+              # 检查text代码块是否正常
+              echo "检查PDF中text代码块的换行情况..."
+              if pdftotext "pdf_output/$dir_name/$base_name.pdf" - 2>/dev/null | grep -q "```text"; then
+                echo "警告: PDF中仍可能包含未转换的text代码块标记"
+              fi
             else
               echo "✗ 转换失败: $md_file"
               failed_count=$((failed_count + 1))
@@ -805,10 +833,10 @@ jobs:
           echo "8. 修复波浪号(~)显示问题" >> pdf_output/README.md
           echo "9. 特殊格式链接转为内联代码" >> pdf_output/README.md
           echo "10. 为引用块添加底色框" >> pdf_output/README.md
-          echo "11. 修复text文本框换行问题" >> pdf_output/README.md
+          echo "11. ✅ **专门修复text代码框换行问题** - 针对```text```代码块优化换行" >> pdf_output/README.md
           echo "12. 优化水平线显示" >> pdf_output/README.md
           echo "13. 不输出picture文件夹，只保留resource文件夹" >> pdf_output/README.md
-          echo "14. 特殊处理text代码块，确保内容自动换行" >> pdf_output/README.md
+          echo "14. 增强中文文本自动换行支持" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
@@ -848,6 +876,15 @@ jobs:
           resource_dirs_count=$(find pdf_output -type d -name "resource" 2>/dev/null | wc -l)
           
           echo "总计: $PDF_COUNT 个 PDF 文件, 总大小约 ${total_size_mb}MB, ${resource_dirs_count} 个目录包含resource资源" >> pdf_output/README.md
+          
+          echo "## text代码块换行优化说明" >> pdf_output/README.md
+          echo "" >> pdf_output/README.md
+          echo "本版本专门优化了```text```代码块的换行问题：" >> pdf_output/README.md
+          echo "1. 在预处理阶段，对text代码块中的长文本进行智能分割" >> pdf_output/README.md
+          echo "2. 在LaTeX层面，为text代码块启用breakanywhere选项，允许在任何位置断行" >> pdf_output/README.md
+          echo "3. 特别针对中文文本，添加了零宽度空格以帮助LaTeX正确断行" >> pdf_output/README.md
+          echo "4. 调整了text代码块的样式，确保与普通代码块区分显示" >> pdf_output/README.md
+          echo "5. 保留所有原有功能，如水印、链接处理等" >> pdf_output/README.md
       
       - name: "Create zip archive for release"
         if: startsWith(github.ref, 'refs/tags/')
