@@ -10,135 +10,202 @@ on:
 jobs:
   convert-md-to-pdf:
     runs-on: ubuntu-latest
-    env:
-      DOCS_DIR: "docs"  # 修改为你的文档文件夹名称
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
           
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
           
-      - name: Install markdown-pdf and dependencies
+      - name: Install dependencies
         run: |
           npm install -g markdown-pdf
-          npm install -g puppeteer
           sudo apt-get update
-          sudo apt-get install -y fonts-noto-cjk fonts-wqy-zenhei
+          sudo apt-get install -y \
+            fonts-noto-cjk \
+            fonts-wqy-zenhei \
+            fonts-liberation \
+            fonts-freefont-ttf
+          
+      - name: Debug - List repository structure
+        run: |
+          echo "=== Repository Structure ==="
+          find . -type f -name "*.md" | head -50
+          echo ""
+          echo "=== Top-level directories ==="
+          ls -la
           
       - name: Find all Markdown files
         id: find-md
         run: |
-          # 查找指定目录下的所有.md文件（排除node_modules等目录）
-          find "${{ env.DOCS_DIR }}" -name "*.md" -type f | grep -v node_modules > md_files.txt
+          # 查找所有.md文件，排除常见的不需要转换的目录
+          echo "Searching for Markdown files in the entire repository..."
           
-          # 统计文件数量
+          # 构建排除模式
+          EXCLUDE_PATTERNS=""
+          EXCLUDE_PATTERNS+=" -not -path './.git/*'"
+          EXCLUDE_PATTERNS+=" -not -path './node_modules/*'"
+          EXCLUDE_PATTERNS+=" -not -path './.github/*'"
+          EXCLUDE_PATTERNS+=" -not -path './.vscode/*'"
+          EXCLUDE_PATTERNS+=" -not -path './.idea/*'"
+          EXCLUDE_PATTERNS+=" -not -path '*/test/*'"
+          EXCLUDE_PATTERNS+=" -not -path '*/tests/*'"
+          EXCLUDE_PATTERNS+=" -not -path '*/__tests__/*'"
+          
+          # 查找文件
+          find . -type f -name "*.md" $EXCLUDE_PATTERNS | sort > md_files.txt
+          
+          # 显示找到的文件
+          echo "Found Markdown files:"
+          cat md_files.txt
+          
+          # 统计数量
           FILE_COUNT=$(wc -l < md_files.txt)
-          echo "Found $FILE_COUNT markdown files"
+          echo "FILE_COUNT=${FILE_COUNT}" >> $GITHUB_ENV
           
-          # 创建输出目录
+          if [ $FILE_COUNT -eq 0 ]; then
+            echo "No Markdown files found. Listing all files in repository:"
+            find . -type f | head -100
+            echo "Skipping PDF conversion as no Markdown files were found."
+            echo "SKIP_CONVERSION=true" >> $GITHUB_ENV
+          else
+            echo "SKIP_CONVERSION=false" >> $GITHUB_ENV
+          fi
+          
+      - name: Create PDF output directory
+        if: env.SKIP_CONVERSION == 'false'
+        run: |
           mkdir -p pdf_output
           
-          # 将文件列表保存为变量供后续步骤使用
-          echo "files=$(cat md_files.txt | tr '\n' ' ')" >> $GITHUB_OUTPUT
-          
-      - name: Convert Markdown to PDF
+      - name: Create custom CSS for PDF styling
+        if: env.SKIP_CONVERSION == 'false'
         run: |
-          # 读取文件列表并逐个转换
-          while IFS= read -r md_file; do
-            if [ -f "$md_file" ]; then
-              echo "Converting: $md_file"
+          cat > pdf_style.css << 'EOF'
+          /* PDF转换样式 - 通用设计 */
+          @media print {
+            @page {
+              margin: 1.5cm;
+              size: A4;
               
-              # 获取文件所在目录，用于处理相对路径的图片
-              file_dir=$(dirname "$md_file")
-              
-              # 生成PDF文件名（保持相同结构但扩展名为.pdf）
-              pdf_file="pdf_output/$(echo "$md_file" | sed 's/\.md$/.pdf/')"
-              
-              # 创建PDF文件的目录结构
-              mkdir -p "$(dirname "$pdf_file")"
-              
-              # 转换为PDF，设置中文支持和其他选项
-              markdown-pdf "$md_file" \
-                --paper-format "A4" \
-                --paper-border "1cm" \
-                --css-path "github-markdown.css" \
-                --remarkable-options '{"html": true}' \
-                --out "$pdf_file"
-                
-              echo "Created: $pdf_file"
-            fi
-          done < md_files.txt
+              @bottom-right {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 10pt;
+                color: #666;
+                font-family: sans-serif;
+              }
+            }
+          }
           
-      - name: Create stylesheet for better PDF rendering
-        run: |
-          # 创建自定义CSS样式以改进PDF渲染
-          cat > github-markdown.css << 'EOF'
-          /* 基础样式 */
           body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, "Noto Sans CJK SC", "WenQuanYi Micro Hei", sans-serif;
-            font-size: 12pt;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", "WenQuanYi Micro Hei", sans-serif;
+            font-size: 11pt;
             line-height: 1.6;
             color: #333;
-            background-color: #fff;
-            padding: 20px;
             margin: 0;
+            padding: 0;
           }
           
-          /* 标题样式 */
-          h1, h2, h3, h4, h5, h6 {
+          /* 容器 */
+          .markdown-body {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+          }
+          
+          /* 标题 */
+          h1 {
+            font-size: 24pt;
+            border-bottom: 2px solid #eaecef;
+            padding-bottom: 10px;
+            margin-top: 1em;
+            margin-bottom: 0.5em;
+          }
+          
+          h2 {
+            font-size: 18pt;
+            border-bottom: 1px solid #eaecef;
+            padding-bottom: 8px;
             margin-top: 1.5em;
             margin-bottom: 0.5em;
-            font-weight: 600;
-            line-height: 1.25;
           }
           
-          h1 { font-size: 1.8em; border-bottom: 2px solid #eaecef; padding-bottom: 0.3em; }
-          h2 { font-size: 1.5em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
-          h3 { font-size: 1.3em; }
-          h4 { font-size: 1.1em; }
+          h3 {
+            font-size: 14pt;
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+          }
           
-          /* 代码块样式 */
+          h4, h5, h6 {
+            font-size: 12pt;
+            margin-top: 1.2em;
+            margin-bottom: 0.5em;
+          }
+          
+          /* 段落和文本 */
+          p {
+            margin: 1em 0;
+          }
+          
+          /* 列表 */
+          ul, ol {
+            padding-left: 2em;
+            margin: 1em 0;
+          }
+          
+          li {
+            margin: 0.3em 0;
+          }
+          
+          /* 代码 */
+          code {
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 10pt;
+            background-color: #f6f8fa;
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
+          }
+          
           pre {
             background-color: #f6f8fa;
             border-radius: 6px;
             padding: 16px;
             overflow: auto;
-            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
-            font-size: 11pt;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 10pt;
+            line-height: 1.45;
+            margin: 1em 0;
           }
           
-          code {
-            background-color: rgba(27,31,35,0.05);
-            border-radius: 3px;
-            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
-            padding: 0.2em 0.4em;
-            font-size: 11pt;
+          pre code {
+            background-color: transparent;
+            padding: 0;
           }
           
-          /* 图片样式 */
-          img {
-            max-width: 100%;
-            height: auto;
-            display: block;
-            margin: 1em auto;
+          /* 引用 */
+          blockquote {
+            border-left: 4px solid #dfe2e5;
+            color: #6a737d;
+            margin: 1em 0;
+            padding: 0 1em;
           }
           
-          /* 表格样式 */
+          /* 表格 */
           table {
             border-collapse: collapse;
             width: 100%;
             margin: 1em 0;
+            font-size: 10pt;
           }
           
           th, td {
             border: 1px solid #dfe2e5;
-            padding: 8px 12px;
+            padding: 6px 12px;
             text-align: left;
           }
           
@@ -147,16 +214,16 @@ jobs:
             font-weight: 600;
           }
           
-          /* 列表样式 */
-          ul, ol {
-            padding-left: 2em;
+          /* 图片 */
+          img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 1em auto;
+            page-break-inside: avoid;
           }
           
-          li {
-            margin: 0.5em 0;
-          }
-          
-          /* 链接样式 */
+          /* 链接 */
           a {
             color: #0366d6;
             text-decoration: none;
@@ -166,77 +233,214 @@ jobs:
             text-decoration: underline;
           }
           
-          /* 引用块样式 */
-          blockquote {
-            border-left: 4px solid #dfe2e5;
-            color: #6a737d;
-            margin: 1em 0;
-            padding-left: 1em;
+          /* 页眉 */
+          .header {
+            text-align: center;
+            margin-bottom: 2em;
+            padding-bottom: 1em;
+            border-bottom: 1px solid #eaecef;
           }
           
-          /* 页眉页脚 */
-          @page {
-            margin: 2cm;
-            @top-center {
-              content: "";
-            }
-            @bottom-right {
-              content: "第 " counter(page) " 页，共 " counter(pages) " 页";
-              font-size: 10pt;
-              color: #666;
-            }
+          .header h1 {
+            border-bottom: none;
+            margin-top: 0;
           }
           
-          /* 打印优化 */
-          @media print {
-            body {
-              padding: 0;
-            }
-            
-            pre, code {
-              page-break-inside: avoid;
-            }
-            
-            h1, h2, h3, h4, h5, h6 {
-              page-break-after: avoid;
-            }
-            
-            img {
-              page-break-inside: avoid;
-              page-break-after: avoid;
-            }
-            
-            table {
-              page-break-inside: avoid;
-            }
+          .metadata {
+            color: #666;
+            font-size: 10pt;
+            margin-top: 1em;
+          }
+          
+          /* 避免分页问题 */
+          h1, h2, h3, h4, h5, h6 {
+            page-break-after: avoid;
+          }
+          
+          pre, table, img {
+            page-break-inside: avoid;
+          }
+          
+          ul, ol {
+            page-break-inside: avoid;
           }
           EOF
           
-      - name: Create consolidated PDF package
+      - name: Convert Markdown files to PDF
+        if: env.SKIP_CONVERSION == 'false'
         run: |
-          # 创建包含所有PDF的zip文件
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          ZIP_NAME="documentation_${TIMESTAMP}.zip"
+          # 计数器
+          CONVERTED=0
+          FAILED=0
           
-          # 进入pdf_output目录并压缩所有内容
+          # 读取文件列表
+          while IFS= read -r md_file; do
+            echo "=== Processing: $md_file ==="
+            
+            # 获取文件信息
+            file_dir=$(dirname "$md_file")
+            file_name=$(basename "$md_file" .md)
+            
+            # 创建对应的PDF输出路径
+            # 移除开头的 "./"
+            clean_path=$(echo "$md_file" | sed 's|^\./||')
+            pdf_file="pdf_output/$(echo "$clean_path" | sed 's/\.md$/.pdf/')"
+            
+            # 创建输出目录
+            mkdir -p "$(dirname "$pdf_file")"
+            
+            # 获取相对路径用于CSS中的图片引用
+            # 计算从Markdown文件到仓库根目录的相对路径
+            rel_path_to_root=$(echo "$file_dir" | sed 's|[^/]*|..|g')
+            if [ -z "$rel_path_to_root" ]; then
+              rel_path_to_root="."
+            fi
+            
+            echo "Source: $md_file"
+            echo "Output: $pdf_file"
+            echo "Relative path to root: $rel_path_to_root"
+            
+            # 检查文件是否存在
+            if [ ! -f "$md_file" ]; then
+              echo "ERROR: File not found: $md_file"
+              FAILED=$((FAILED + 1))
+              continue
+            fi
+            
+            # 为当前文件创建临时CSS，处理相对路径
+            cat > temp_style.css << EOF
+          /* 临时样式 - 为 $md_file 生成 */
+          $(cat pdf_style.css)
+          
+          /* 修复图片路径 */
+          img {
+            /* 尝试使用相对于仓库根目录的路径 */
+            max-width: 100%;
+          }
+          
+          /* 页面元数据 */
+          @media print {
+            @page {
+              @top-center {
+                content: "$file_name";
+                font-size: 10pt;
+                color: #666;
+              }
+            }
+          }
+          EOF
+            
+            # 尝试转换文件
+            if markdown-pdf "$md_file" \
+              --paper-format "A4" \
+              --paper-border "1.5cm" \
+              --css-path "temp_style.css" \
+              --remarkable-options '{"html": true, "breaks": false, "typographer": true}' \
+              --out "$pdf_file" 2>&1; then
+              
+              echo "✓ Successfully converted: $pdf_file"
+              CONVERTED=$((CONVERTED + 1))
+              
+              # 检查生成的PDF文件大小
+              if [ -f "$pdf_file" ]; then
+                file_size=$(du -h "$pdf_file" | cut -f1)
+                echo "  File size: $file_size"
+              else
+                echo "  WARNING: PDF file was not created"
+              fi
+            else
+              echo "✗ Failed to convert: $md_file"
+              FAILED=$((FAILED + 1))
+              
+              # 尝试使用更简单的转换
+              echo "  Trying simple conversion..."
+              if markdown-pdf "$md_file" \
+                --paper-format "A4" \
+                --out "$pdf_file" 2>&1; then
+                echo "  ✓ Simple conversion succeeded"
+                CONVERTED=$((CONVERTED + 1))
+              else
+                echo "  ✗ All conversion attempts failed"
+              fi
+            fi
+            
+            echo ""
+          done < md_files.txt
+          
+          echo "=== Conversion Summary ==="
+          echo "Total files processed: $((CONVERTED + FAILED))"
+          echo "Successfully converted: $CONVERTED"
+          echo "Failed: $FAILED"
+          
+          # 保存统计信息
+          echo "CONVERTED=$CONVERTED" >> $GITHUB_ENV
+          echo "FAILED=$FAILED" >> $GITHUB_ENV
+          
+      - name: Create consolidated package
+        if: env.SKIP_CONVERSION == 'false' && env.CONVERTED > 0
+        run: |
+          # 检查是否有生成的PDF文件
+          if [ ! -d "pdf_output" ] || [ -z "$(find pdf_output -name '*.pdf' -type f)" ]; then
+            echo "No PDF files were generated"
+            exit 1
+          fi
+          
+          # 创建版本号
+          if [ -n "${GITHUB_REF#refs/tags/}" ] && [ "${GITHUB_REF#refs/tags/}" != "$GITHUB_REF" ]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="$(date +%Y%m%d)-$(git rev-parse --short HEAD)"
+          fi
+          
+          # 创建ZIP文件
+          ZIP_NAME="documentation-${VERSION}.zip"
+          
+          echo "Creating ZIP archive: $ZIP_NAME"
+          
+          # 压缩PDF输出目录
           cd pdf_output
-          zip -r "../${ZIP_NAME}" .
+          zip -r "../$ZIP_NAME" .
           cd ..
+          
+          # 创建文件清单
+          echo "=== Generated PDF Files ===" > file_list.txt
+          find pdf_output -name "*.pdf" -type f | sort >> file_list.txt
+          echo "" >> file_list.txt
+          echo "Total PDF files: $(find pdf_output -name "*.pdf" -type f | wc -l)" >> file_list.txt
           
           echo "ZIP_NAME=${ZIP_NAME}" >> $GITHUB_ENV
           
-      - name: Upload PDF package as artifact
+      - name: Upload PDF artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: documentation-pdfs
+          name: pdf-documents
           path: |
             ${{ env.ZIP_NAME }}
             pdf_output/
-          retention-days: 7
+            file_list.txt
+          retention-days: 14
           
-  release:
+      - name: Display summary
+        run: |
+          echo "=== Markdown to PDF Conversion Summary ==="
+          echo ""
+          if [ "${{ env.SKIP_CONVERSION }}" = "true" ]; then
+            echo "No Markdown files were found in the repository."
+            echo "Skipped PDF conversion."
+          else
+            echo "Conversion results:"
+            echo "  - Successfully converted: ${{ env.CONVERTED }} files"
+            echo "  - Failed: ${{ env.FAILED }} files"
+            echo ""
+            if [ -f "file_list.txt" ]; then
+              echo "Generated PDF files:"
+              cat file_list.txt
+            fi
+          fi
+          
+  create-release:
     needs: convert-md-to-pdf
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') && needs.convert-md-to-pdf.result == 'success' && env.SKIP_CONVERSION == 'false' && env.CONVERTED > 0
     runs-on: ubuntu-latest
     
     steps:
@@ -248,34 +452,87 @@ jobs:
       - name: Download PDF artifacts
         uses: actions/download-artifact@v4
         with:
-          name: documentation-pdfs
+          name: pdf-documents
+          
+      - name: Get release information
+        id: release_info
+        run: |
+          # 获取标签名
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+          
+          # 获取当前日期
+          echo "date=$(date +'%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_OUTPUT
+          
+          # 获取提交信息
+          if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
+            COMMIT_MSG=$(git log -1 --pretty=format:"%s")
+            echo "commit_msg=${COMMIT_MSG}" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Generate release notes
+        id: generate_notes
+        run: |
+          # 生成发布说明
+          cat > release_body.md << EOF
+          # Documentation Release - ${{ steps.release_info.outputs.tag_name }}
+          
+          This release contains PDF versions of all Markdown documentation found in the repository.
+          
+          ## Release Details
+          
+          - **Release Date:** ${{ steps.release_info.outputs.date }}
+          - **Git Tag:** ${{ steps.release_info.outputs.tag_name }}
+          - **Source Commit:** [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+          
+          ## Generated Documentation
+          
+          All Markdown files found in the repository have been converted to PDF format while preserving the original directory structure.
+          
+          ### Included Files
+          
+          EOF
+          
+          # 添加文件列表
+          if [ -f "file_list.txt" ]; then
+            cat file_list.txt | sed 's/^/  - /' >> release_body.md
+          fi
+          
+          # 添加使用说明
+          cat >> release_body.md << EOF
+          
+          ## How to Use
+          
+          1. **Download All:** Use the \`documentation-*.zip\` file to download all PDF documents at once.
+          2. **Download Individual Files:** Browse the release assets to download specific PDF files.
+          
+          ## Notes
+          
+          - The conversion process automatically searches for all \`.md\` files in the repository.
+          - Images and resources referenced with relative paths in the Markdown files should be preserved.
+          - If you encounter any issues with the generated PDFs, please check the repository for the source Markdown files.
+          
+          ---
+          
+          *Generated automatically by GitHub Actions*
+          EOF
+          
+          # 将发布说明保存为变量
+          RELEASE_BODY=$(cat release_body.md)
+          echo "release_body<<EOF" >> $GITHUB_OUTPUT
+          echo "$RELEASE_BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
           
       - name: Create GitHub Release
-        id: create_release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
-          body: |
-            # 文档发布
-            
-            此版本包含以下文档的PDF版本：
-            
-            - 所有Markdown文档已转换为PDF格式
-            - 包含原始目录结构
-            - 优化中文显示支持
-            
-            生成时间: ${{ steps.date.outputs.date }}
-            
-            要下载所有PDF文档，请下载下方的ZIP文件。
+          tag_name: ${{ steps.release_info.outputs.tag_name }}
+          name: "Documentation ${{ steps.release_info.outputs.tag_name }}"
+          body: ${{ steps.generate_notes.outputs.release_body }}
           draft: false
           prerelease: false
           files: |
-            *.zip
-            pdf_output/*.pdf
+            ${{ env.ZIP_NAME }}
+            pdf_output/**/*.pdf
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Get current date
-        id: date
-        run: echo "date=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
