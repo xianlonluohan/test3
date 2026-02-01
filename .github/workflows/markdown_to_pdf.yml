@@ -280,24 +280,24 @@ jobs:
               
               def fix_text_content(match):
                   text_content = match.group(1)
-                  # 按句子或自然断点分割，保持语义完整
+                  # 将长行分割为较短的行
                   lines = text_content.split('\n')
                   fixed_lines = []
                   
                   for line in lines:
-                      if len(line) > 80:  # 如果行太长
-                          # 在中文标点或空格处分割，保持语义完整
-                          # 优先在中文标点处分割
-                          parts = re.split(r'([。！？；：,，.])', line)
+                      if len(line) > 100:  # 如果行太长
+                          # 在合适的位置分割
+                          words = line.split(' ')
                           current_line = ''
-                          for i in range(0, len(parts), 2):
-                              part = parts[i] + (parts[i+1] if i+1 < len(parts) else '')
-                              if len(current_line) + len(part) > 80:
-                                  if current_line:
-                                      fixed_lines.append(current_line)
-                                  current_line = part
+                          for word in words:
+                              if len(current_line) + len(word) + 1 > 80:
+                                  fixed_lines.append(current_line)
+                                  current_line = word
                               else:
-                                  current_line += part
+                                  if current_line:
+                                      current_line += ' ' + word
+                                  else:
+                                      current_line = word
                           if current_line:
                               fixed_lines.append(current_line)
                       else:
@@ -314,11 +314,11 @@ jobs:
                   with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                       content = f.read()
                   
-                  # 1. 修复text代码块中的换行问题（放在最前面处理）
-                  content = fix_text_code_blocks(content)
-                  
-                  # 2. 保护代码块、内联代码和引用块
+                  # 1. 保护代码块、内联代码和引用块
                   protected_content, code_blocks, inline_code_blocks, quote_blocks = protect_code_blocks(content)
+                  
+                  # 2. 修复text代码块中的换行问题
+                  protected_content = fix_text_code_blocks(protected_content)
                   
                   # 3. 保护特殊格式的链接
                   protected_content = preserve_special_links(protected_content)
@@ -447,7 +447,7 @@ jobs:
             prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
           }
           
-          % 特殊处理text代码块 - 优化自动换行，特别针对中文文本
+          % 特殊处理text代码块 - 优化自动换行
           \lstdefinestyle{textstyle}{
             basicstyle=\ttfamily\normalsize\selectfont, % 增大字体
             backgroundcolor=\color{codebg},
@@ -456,7 +456,7 @@ jobs:
             framerule=1pt,
             rulecolor=\color{framecolor},
             breaklines=true,
-            breakatwhitespace=false, % 针对中文，不只在空格处断行
+            breakatwhitespace=true,
             breakautoindent=true,
             breakindent=25pt, % 增加换行缩进
             postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
@@ -473,7 +473,6 @@ jobs:
             literate={~}{{\textasciitilde}}1, % 正确处理波浪号
             breaklines=true, % 强制换行
             prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
-            breakanywhere=true, % 允许在任何位置断行，特别针对中文
           }
           
           % 引用块设置
@@ -794,7 +793,7 @@ jobs:
           echo "8. 修复波浪号(~)显示问题" >> pdf_output/README.md
           echo "9. 特殊格式链接转为内联代码" >> pdf_output/README.md
           echo "10. 为引用块添加底色框" >> pdf_output/README.md
-          echo "11. 修复text文本框换行问题（特别针对中文文本）" >> pdf_output/README.md
+          echo "11. 修复text文本框换行问题" >> pdf_output/README.md
           echo "12. 优化水平线显示" >> pdf_output/README.md
           echo "13. 不输出picture文件夹，只保留resource文件夹" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
