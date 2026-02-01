@@ -24,13 +24,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          # 移除 cache 参数，避免 package-lock.json 错误
           
       - name: Install markdown-pdf globally
         run: |
-          # 清除 npm 缓存
           npm cache clean --force
-          # 安装 markdown-pdf
           npm install -g markdown-pdf
           echo "markdown-pdf version:"
           markdown-pdf --help | head -2 || echo "markdown-pdf installed"
@@ -48,12 +45,10 @@ jobs:
             libfreetype6 \
             libfontconfig1
           
-          # 刷新字体缓存
           fc-cache -fv
           
       - name: Install minimal dependencies for PDF generation
         run: |
-          # 只安装必要的包，避免包名问题
           sudo apt-get update
           sudo apt-get install -y \
             ca-certificates \
@@ -77,14 +72,12 @@ jobs:
         run: |
           echo "=== Searching for Markdown files ==="
           
-          # 查找所有 .md 文件，排除不需要的目录
           find . -type f -name '*.md' \
             -not -path './.git/*' \
             -not -path './node_modules/*' \
             -not -path './.github/*' \
             -not -path './pdf_output/*' > md_files.txt 2>/dev/null || true
           
-          # 统计文件数量
           file_count=0
           if [ -f "md_files.txt" ] && [ -s "md_files.txt" ]; then
             file_count=$(wc -l < md_files.txt)
@@ -106,7 +99,7 @@ jobs:
         run: |
           mkdir -p pdf_output
           
-      - name: Convert Markdown to PDF (minimal approach)
+      - name: Convert Markdown to PDF
         if: steps.check-files.outputs.file_count != '0'
         id: convert-md
         run: |
@@ -130,37 +123,29 @@ jobs:
               
               echo "--- Processing file $total_files: $md_file ---"
               
-              # 获取文件基本信息
               file_dir=$(dirname "$md_file")
               file_name=$(basename "$md_file" .md)
               
-              # 创建输出路径（移除开头的./）
               relative_path=$(echo "$md_file" | sed 's|^\./||')
               pdf_path="pdf_output/$(echo "$relative_path" | sed 's/\.md$/.pdf/')"
               
-              # 创建输出目录
               mkdir -p "$(dirname "$pdf_path")"
               
               echo "Input: $md_file"
               echo "Output: $pdf_path"
               
-              # 保存当前目录
               current_dir=$(pwd)
               
-              # 进入文件所在目录以确保相对路径正确
               cd "$file_dir"
               
-              # 获取当前目录下的文件名
               current_md_file=$(basename "$md_file")
               
               echo "Running markdown-pdf..."
               
-              # 使用最简单的 markdown-pdf 命令
               if markdown-pdf "$current_md_file" --out "../../$pdf_path"; then
                 echo "✓ Successfully converted: $pdf_path"
                 success_count=$((success_count + 1))
                 
-                # 检查生成的PDF文件
                 if [ -f "../../$pdf_path" ]; then
                   file_size=$(du -h "../../$pdf_path" | cut -f1)
                   echo "  File size: $file_size"
@@ -173,12 +158,11 @@ jobs:
                 fail_count=$((fail_count + 1))
               fi
               
-              # 返回原始目录
               cd "$current_dir"
               
               echo ""
               
-            done < ../md_files.txt
+            done < md_files.txt  # 修复：使用正确的文件路径
           else
             echo "No Markdown files to process"
           fi
@@ -188,7 +172,6 @@ jobs:
           echo "Successfully converted: $success_count"
           echo "Failed: $fail_count"
           
-          # 保存统计信息到环境变量
           echo "SUCCESS_COUNT=$success_count" >> $GITHUB_ENV
           echo "FAIL_COUNT=$fail_count" >> $GITHUB_ENV
           
@@ -198,7 +181,6 @@ jobs:
         run: |
           echo "=== Checking generated PDF files ==="
           
-          # 检查是否有PDF文件生成
           if [ -d "pdf_output" ]; then
             pdf_count=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
             echo "Found $pdf_count PDF files"
@@ -207,7 +189,6 @@ jobs:
               echo "First 3 PDF files:"
               find pdf_output -name "*.pdf" -type f 2>/dev/null | head -3
               
-              # 检查PDF文件是否有效
               valid_count=0
               for pdf in $(find pdf_output -name "*.pdf" -type f 2>/dev/null | head -3); do
                 echo "Checking: $pdf"
@@ -242,7 +223,6 @@ jobs:
         run: |
           echo "=== Creating ZIP archive ==="
           
-          # 生成版本名称
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             version="${GITHUB_REF#refs/tags/}"
           else
@@ -251,18 +231,15 @@ jobs:
           
           zip_name="documentation-pdf-${version}.zip"
           
-          # 检查是否有PDF文件
           pdf_files_count=$(find pdf_output -name "*.pdf" -type f 2>/dev/null | wc -l)
           
           if [ $pdf_files_count -gt 0 ]; then
             echo "Found $pdf_files_count PDF files to compress"
             
-            # 压缩PDF目录
             cd pdf_output
             zip -r "../${zip_name}" . -i "*.pdf"
             cd ..
             
-            # 检查ZIP文件
             if [ -f "$zip_name" ]; then
               zip_size=$(du -h "$zip_name" | cut -f1)
               echo "✓ Created ZIP: $zip_name ($zip_size)"
@@ -337,7 +314,7 @@ jobs:
             
             *Automatically generated by GitHub Actions*
           draft: false
-          preredule: false
+          prerelease: false  # 修复：改正拼写错误
           files: |
             documentation-pdf-*.zip
             pdf_output/**/*.pdf
