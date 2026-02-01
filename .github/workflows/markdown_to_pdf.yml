@@ -84,9 +84,19 @@ jobs:
               quote_pattern = re.compile(r'^(?:>.*\n?)+', re.MULTILINE)
               protected_content = quote_pattern.sub(replace_quote_block, protected_content)
               
-              return protected_content, code_blocks, inline_code_blocks, quote_blocks
+              # 保护表格
+              table_blocks = []
+              def replace_table_block(match):
+                  table_blocks.append(match.group(0))
+                  return f"@@@TABLE_BLOCK_{len(table_blocks)-1}@@@"
+              
+              # 匹配表格，以 | 开头的行，直到遇到空行
+              table_pattern = re.compile(r'^(?:\|.*\|[\r\n]*)+', re.MULTILINE)
+              protected_content = table_pattern.sub(replace_table_block, protected_content)
+              
+              return protected_content, code_blocks, inline_code_blocks, quote_blocks, table_blocks
           
-          def restore_code_blocks(content, code_blocks, inline_code_blocks, quote_blocks):
+          def restore_code_blocks(content, code_blocks, inline_code_blocks, quote_blocks, table_blocks):
               """恢复保护的代码块"""
               restored_content = content
               
@@ -104,6 +114,11 @@ jobs:
               for i, quote_block in enumerate(quote_blocks):
                   placeholder = f"@@@QUOTE_BLOCK_{i}@@@"
                   restored_content = restored_content.replace(placeholder, quote_block)
+              
+              # 恢复表格
+              for i, table_block in enumerate(table_blocks):
+                  placeholder = f"@@@TABLE_BLOCK_{i}@@@"
+                  restored_content = restored_content.replace(placeholder, table_block)
               
               return restored_content
           
@@ -274,37 +289,15 @@ jobs:
               return content
           
           def fix_text_code_blocks(content):
-              """修复text代码块中的换行问题"""
+              """修复text代码块中的换行问题 - 简化版本，只确保保留原始换行"""
               # 匹配```text代码块
               text_pattern = re.compile(r'```text\n(.*?)\n```', re.DOTALL)
               
               def fix_text_content(match):
                   text_content = match.group(1)
-                  # 将长行分割为较短的行
-                  lines = text_content.split('\n')
-                  fixed_lines = []
-                  
-                  for line in lines:
-                      if len(line) > 100:  # 如果行太长
-                          # 在合适的位置分割
-                          words = line.split(' ')
-                          current_line = ''
-                          for word in words:
-                              if len(current_line) + len(word) + 1 > 80:
-                                  fixed_lines.append(current_line)
-                                  current_line = word
-                              else:
-                                  if current_line:
-                                      current_line += ' ' + word
-                                  else:
-                                      current_line = word
-                          if current_line:
-                              fixed_lines.append(current_line)
-                      else:
-                          fixed_lines.append(line)
-                  
-                  fixed_content = '\n'.join(fixed_lines)
-                  return f'```text\n{fixed_content}\n```'
+                  # 不再强制分割长行，保留原始换行
+                  # LaTeX的listings环境会自动处理换行
+                  return f'```text\n{text_content}\n```'
               
               return text_pattern.sub(fix_text_content, content)
           
@@ -314,10 +307,10 @@ jobs:
                   with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                       content = f.read()
                   
-                  # 1. 保护代码块、内联代码和引用块
-                  protected_content, code_blocks, inline_code_blocks, quote_blocks = protect_code_blocks(content)
+                  # 1. 保护代码块、内联代码、引用块和表格
+                  protected_content, code_blocks, inline_code_blocks, quote_blocks, table_blocks = protect_code_blocks(content)
                   
-                  # 2. 修复text代码块中的换行问题
+                  # 2. 修复text代码块中的换行问题（简化版）
                   protected_content = fix_text_code_blocks(protected_content)
                   
                   # 3. 保护特殊格式的链接
@@ -352,10 +345,10 @@ jobs:
                   
                   # 9. 移除其他HTML标签（不处理代码块中的）
                   # 小心处理，避免移除代码中的<>
-                  processed_content = re.sub(r'<(?!@@@CODE_BLOCK_|@@@INLINE_CODE_|@@@QUOTE_BLOCK_)(?!URL_PLACEHOLDER)(?!\/?code>)(?!\/?pre>)(?!\/?span>)(?!\/?div>)(?!\/?p>)(?!\/?br>)[^>]+>', '', processed_content)
+                  processed_content = re.sub(r'<(?!@@@CODE_BLOCK_|@@@INLINE_CODE_|@@@QUOTE_BLOCK_|@@@TABLE_BLOCK_)(?!URL_PLACEHOLDER)(?!\/?code>)(?!\/?pre>)(?!\/?span>)(?!\/?div>)(?!\/?p>)(?!\/?br>)[^>]+>', '', processed_content)
                   
-                  # 10. 恢复代码块
-                  final_content = restore_code_blocks(processed_content, code_blocks, inline_code_blocks, quote_blocks)
+                  # 10. 恢复代码块、表格等
+                  final_content = restore_code_blocks(processed_content, code_blocks, inline_code_blocks, quote_blocks, table_blocks)
                   
                   # 保存处理后的文件
                   with open(filepath, 'w', encoding='utf-8') as f:
@@ -413,6 +406,8 @@ jobs:
           \usepackage{placeins} % 用于控制浮动体位置
           \usepackage{mdframed} % 用于创建带背景的引用块
           \usepackage{xspace} % 用于正确处理波浪号
+          \usepackage{longtable} % 用于处理长表格
+          \usepackage{booktabs} % 用于美化表格
           
           \definecolor{codebg}{rgb}{0.98,0.98,0.98}
           \definecolor{framecolor}{rgb}{0.8,0.8,0.8}
@@ -473,6 +468,11 @@ jobs:
             literate={~}{{\textasciitilde}}1, % 正确处理波浪号
             breaklines=true, % 强制换行
             prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
+            % 确保长文本正确换行
+            breaklines=true,
+            prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookleftarrow}},
+            showstringspaces=false,
+            columns=fullflexible,
           }
           
           % 引用块设置
@@ -602,18 +602,92 @@ jobs:
               return pandoc.RawBlock('latex', '\\vspace{0.5em}\\HRule\\vspace{0.5em}')
             end
             
+            -- 处理表格，确保使用longtable环境
+            if el.t == "Table" then
+              -- 将表格转换为LaTeX longtable环境
+              local caption = ""
+              if el.caption then
+                caption = pandoc.write(pandoc.Pandoc(el.caption), "latex")
+              end
+              
+              local headers = ""
+              if el.head then
+                for i, row in ipairs(el.head.rows) do
+                  local row_content = ""
+                  for j, cell in ipairs(row.cells) do
+                    row_content = row_content .. pandoc.write(pandoc.Pandoc(cell.content), "latex")
+                    if j < #row.cells then
+                      row_content = row_content .. " & "
+                    end
+                  end
+                  headers = headers .. row_content .. " \\\\ \\hline\n"
+                end
+              end
+              
+              local body = ""
+              if el.bodies then
+                for _, tbl_body in ipairs(el.bodies) do
+                  for i, row in ipairs(tbl_body.body.rows) do
+                    local row_content = ""
+                    for j, cell in ipairs(row.cells) do
+                      row_content = row_content .. pandoc.write(pandoc.Pandoc(cell.content), "latex")
+                      if j < #row.cells then
+                        row_content = row_content .. " & "
+                      end
+                    end
+                    body = body .. row_content .. " \\\\ \\hline\n"
+                  end
+                end
+              end
+              
+              local latex_table = "\\begin{longtable}{|"
+              if el.head and #el.head.rows > 0 then
+                for i = 1, #el.head.rows[1].cells do
+                  latex_table = latex_table .. "c|"
+                end
+              end
+              latex_table = latex_table .. "}\n"
+              
+              if caption ~= "" then
+                latex_table = latex_table .. "\\caption{" .. caption .. "} \\\\ \\hline\n"
+              end
+              
+              if headers ~= "" then
+                latex_table = latex_table .. headers
+              end
+              
+              latex_table = latex_table .. body
+              latex_table = latex_table .. "\\end{longtable}"
+              
+              return pandoc.RawBlock('latex', latex_table)
+            end
+            
             return el
           end
           
           function CodeBlock(el)
             -- 处理代码块，如果是text类型则使用特殊样式
             if el.classes[1] == "text" then
+              -- 确保text代码块中的波浪号正确转义
+              local text_content = el.text:gsub('~', '\\textasciitilde{}')
               return pandoc.RawBlock('latex', 
                 '\\begin{lstlisting}[style=textstyle]\n' .. 
-                el.text .. 
+                text_content .. 
                 '\n\\end{lstlisting}')
             end
-            return el
+            
+            -- 处理其他代码块
+            local text_content = el.text:gsub('~', '\\textasciitilde{}')
+            local latex_code = '\\begin{lstlisting}\n' .. text_content .. '\n\\end{lstlisting}'
+            
+            return pandoc.RawBlock('latex', latex_code)
+          end
+          
+          function Code(el)
+            -- 处理内联代码中的波浪号
+            local text = el.text
+            text = text:gsub('~', '\\textasciitilde{}')
+            return pandoc.Code(text)
           end
           
           function Str(el)
@@ -631,11 +705,17 @@ jobs:
             return pandoc.Str(text)
           end
           
-          function Code(el)
-            -- 处理内联代码中的波浪号
-            local text = el.text
-            text = text:gsub('~', '\\textasciitilde{}')
-            return pandoc.Code(text)
+          function Link(el)
+            -- 处理链接，确保正确格式
+            local url = el.target
+            local text = pandoc.write(pandoc.Pandoc(el.content), "latex")
+            
+            -- 如果是特殊格式的链接，确保正确显示
+            if url:match("^https?://") then
+              return pandoc.RawInline('latex', '\\href{' .. url .. '}{' .. text .. '}')
+            end
+            
+            return el
           end
           EOF
       
@@ -695,7 +775,7 @@ jobs:
               -V colorlinks=true \
               -V linkcolor=blue \
               -V urlcolor=blue \
-              --wrap=auto \
+              --wrap=preserve \
               --highlight-style=tango \
               -f markdown \
               -M date="$CURRENT_DATE" \
@@ -796,6 +876,8 @@ jobs:
           echo "11. 修复text文本框换行问题" >> pdf_output/README.md
           echo "12. 优化水平线显示" >> pdf_output/README.md
           echo "13. 不输出picture文件夹，只保留resource文件夹" >> pdf_output/README.md
+          echo "14. 优化表格解析，确保正确格式" >> pdf_output/README.md
+          echo "15. 改进text代码块换行处理" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
