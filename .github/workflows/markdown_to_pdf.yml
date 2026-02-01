@@ -1,4 +1,4 @@
-name: "Convert Markdown to PDF with mark2pdf"
+name: "Convert Markdown to PDF with mark2pdf (pnpm)"
 
 on:
   push:
@@ -19,29 +19,58 @@ jobs:
       - name: "Setup Node.js"
         uses: actions/setup-node@v4
         with:
-          node-version: '18' # mark2pdf 要求 Node.js >= 16.15.0
-          cache: 'pnpm' # 如果使用 pnpm
+          node-version: '18'
+          cache: 'pnpm'  # 启用pnpm缓存
 
-      - name: "Install mark2pdf globally"
+      - name: "Install pnpm"
         run: |
-          # 方案A：直接从GitHub仓库安装（假设仓库可公开访问）
-          npm install -g https://github.com/evanfang0054/mark2pdf
-          # 方案B：如果方案A失败，则克隆、构建并本地安装
-          # git clone https://github.com/evanfang0054/mark2pdf.git
-          # cd mark2pdf
-          # pnpm install && pnpm run build
-          # npm link # 或使用 pnpm 的全局安装方式
-          mark2pdf --version # 验证安装
+          # Ubuntu环境中，actions/setup-node的cache: 'pnpm'可能不会自动安装pnpm
+          # 所以显式安装pnpm
+          npm install -g pnpm@8
+          pnpm --version
 
-      - name: "创建 mark2pdf 配置文件"
+      - name: "安装 mark2pdf"
         run: |
+          # 方案A：从GitHub直接安装（如果项目配置了bin）
+          echo "尝试从GitHub直接安装mark2pdf..."
+          pnpm install -g "https://github.com/evanfang0054/mark2pdf" || {
+            echo "直接安装失败，改为克隆后构建安装..."
+            # 方案B：克隆、构建、安装
+            git clone https://github.com/evanfang0054/mark2pdf.git mark2pdf-tool
+            cd mark2pdf-tool
+            pnpm install
+            pnpm run build
+            # 使用npm link创建全局链接（因为pnpm link --global需要特殊权限）
+            npm link
+            cd ..
+          }
+          
+          # 验证安装
+          if command -v mark2pdf &> /dev/null; then
+            mark2pdf --version
+          else
+            # 如果全局命令不可用，尝试直接使用本地构建的版本
+            if [ -f "./mark2pdf-tool/dist/bin/mark2pdf.js" ]; then
+              echo "mark2pdf全局命令未找到，但找到本地构建版本"
+              # 创建软链接到/usr/local/bin以便后续步骤使用
+              sudo ln -sf "$(pwd)/mark2pdf-tool/dist/bin/mark2pdf.js" /usr/local/bin/mark2pdf
+              mark2pdf --version
+            else
+              echo "错误：无法找到mark2pdf可执行文件"
+              exit 1
+            fi
+          fi
+
+      - name: "创建配置文件"
+        run: |
+          # 创建mark2pdf配置文件
           cat > config.json << 'EOF'
           {
             "input": {
               "path": ".",
               "extensions": [".md"],
               "filters": {
-                "exclude": [".git", "node_modules", "pdf_output"]
+                "exclude": ["**/.git/**", "**/node_modules/**", "**/pdf_output/**"]
               }
             },
             "output": {
@@ -54,105 +83,167 @@ jobs:
               "timeout": 60000,
               "format": "A4",
               "orientation": "portrait"
-            },
-            "features": {
-              "incremental": false
             }
           }
           EOF
           
-          # 创建基础CSS样式文件，尝试优化代码块换行
+          # 创建CSS样式文件
           mkdir -p assets
           cat > assets/pdf-style.css << 'EOF'
+          /* 基础样式 */
           body {
-            font-family: 'Noto Serif CJK SC', 'Source Han Serif SC', SimSun, serif;
+            font-family: 'Noto Serif SC', 'Source Han Serif SC', SimSun, serif;
             line-height: 1.6;
             font-size: 11pt;
+            margin: 0;
+            padding: 20px;
           }
+          
+          /* 代码块样式 - 重点解决换行问题 */
           pre, code {
-            font-family: 'Noto Sans Mono CJK SC', 'Courier New', monospace;
-            background-color: #f8f8f8;
-            border-radius: 3px;
+            font-family: 'Noto Sans Mono SC', 'Courier New', monospace;
           }
+          
           pre {
+            background-color: #f8f8f8;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
             padding: 1em;
-            overflow-wrap: break-word;
-            white-space: pre-wrap; /* 关键：允许代码换行 */
+            overflow-x: auto;
+            white-space: pre-wrap; /* 允许代码换行 */
+            word-wrap: break-word;
+            word-break: break-all;
           }
+          
+          code {
+            background-color: #f5f5f5;
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
+            font-size: 0.9em;
+          }
+          
+          /* 图片样式 */
           img {
             max-width: 100%;
             height: auto;
+            display: block;
+            margin: 1em auto;
           }
+          
+          /* 表格样式 */
           table {
             border-collapse: collapse;
             width: 100%;
+            margin: 1em 0;
           }
+          
           th, td {
             border: 1px solid #ddd;
             padding: 8px;
+            text-align: left;
           }
+          
+          th {
+            background-color: #f2f2f2;
+          }
+          
+          /* 引用块样式 */
           blockquote {
             border-left: 4px solid #ddd;
             padding-left: 1em;
+            margin-left: 0;
             color: #555;
+            font-style: italic;
+          }
+          
+          /* 标题样式 */
+          h1, h2, h3, h4, h5, h6 {
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+            font-weight: bold;
+          }
+          
+          h1 { font-size: 1.8em; }
+          h2 { font-size: 1.5em; }
+          h3 { font-size: 1.3em; }
+          
+          /* 列表样式 */
+          ul, ol {
+            padding-left: 2em;
+          }
+          
+          li {
+            margin-bottom: 0.5em;
+          }
+          
+          /* 水平线 */
+          hr {
+            border: none;
+            border-top: 1px solid #ddd;
+            margin: 2em 0;
           }
           EOF
 
-      - name: "（可选）预处理Markdown文件"
+      - name: "运行转换"
         run: |
-          # 这里可以放置您之前的部分Python预处理逻辑
-          # 例如：修复特定的字符问题（0@100 -> 0~100）、移除图片标签行等
-          # 由于 mark2pdf 使用不同的渲染引擎，部分预处理可能不再需要或需要调整
-          echo "根据需要进行Markdown预处理"
-
-      - name: "运行 mark2pdf 进行转换"
-        run: |
-          mark2pdf convert -c config.json --verbose
-        env:
-          # 如果工具需要特定环境变量可以在这里设置
-          NODE_OPTIONS: "--max-old-space-size=4096"
-
-      - name: "（可选）后处理：添加简单水印"
-        run: |
-          # 警告：这是单页、非平铺的简单水印示例，与您之前的效果不同。
-          # 您需要安装额外的工具，例如 pdftk 或 qpdf。
-          # 由于效果差异大，此步骤仅供参考，通常不建议添加。
-          echo "平铺式水印是LaTeX方案的特色，在PDF后处理中难以完美复现。"
-          echo "如需添加简单水印，可考虑使用像 'pdf-stamp' 这样的Node库，但功能有限。"
+          echo "开始转换Markdown文件为PDF..."
+          # 使用详细模式运行，便于调试
+          mark2pdf convert -c config.json --verbose || {
+            echo "转换过程中出现错误，但将继续执行后续步骤..."
+            # 检查是否有PDF生成
+            if find ./pdf_output -name "*.pdf" 2>/dev/null | head -1; then
+              echo "找到已生成的PDF文件"
+            fi
+          }
 
       - name: "复制资源文件"
         run: |
-          # 将原目录中的 resource 文件夹复制到对应的PDF输出目录
-          find . -name "*.md" -path "*/node_modules/*" -prune -o -type f -name "*.md" -print | while read md_file; do
-            md_dir=$(dirname "$md_file")
-            # 计算相对于仓库根目录的路径
-            rel_dir=${md_dir#./}
-            if [ -d "$md_dir/resource" ]; then
-              pdf_output_dir="./pdf_output/$rel_dir"
-              mkdir -p "$pdf_output_dir"
-              cp -r "$md_dir/resource" "$pdf_output_dir/" 2>/dev/null || echo "注意：复制 $md_dir/resource 可能失败（如已存在）"
+          echo "复制resource目录到输出目录..."
+          # 查找所有有PDF文件的目录，复制对应的resource目录
+          find pdf_output -name "*.pdf" -type f 2>/dev/null | while read pdf_file; do
+            pdf_dir=$(dirname "$pdf_file")
+            # 从pdf_output目录反向找到源目录
+            rel_dir=${pdf_dir#pdf_output/}
+            if [ -d "$rel_dir/resource" ]; then
+              echo "复制 $rel_dir/resource 到 $pdf_dir/"
+              cp -r "$rel_dir/resource" "$pdf_dir/" 2>/dev/null || echo "注意：复制 $rel_dir/resource 可能失败"
             fi
           done
 
       - name: "验证并打包输出"
         run: |
           if [ -d "./pdf_output" ]; then
-            echo "PDF输出目录内容:"
-            find ./pdf_output -name "*.pdf" | head -10
-            total_pdfs=$(find ./pdf_output -name "*.pdf" | wc -l)
-            echo "总共生成 $total_pdfs 个PDF文件。"
-            # 打包输出，便于下载
-            cd ./pdf_output && zip -r ../pdf-output-archive.zip . && cd ..
+            echo "PDF输出目录结构:"
+            find ./pdf_output -type f -name "*.pdf" | head -20
+            
+            total_pdfs=$(find ./pdf_output -type f -name "*.pdf" 2>/dev/null | wc -l)
+            if [ "$total_pdfs" -eq 0 ]; then
+              echo "警告：没有生成任何PDF文件"
+              # 列出可能的原因
+              echo "检查是否有Markdown文件:"
+              find . -name "*.md" -not -path "./pdf_output/*" -not -path "./node_modules/*" -not -path "./mark2pdf-tool/*" | head -10
+            else
+              echo "成功生成 $total_pdfs 个PDF文件"
+              # 计算总大小
+              total_size=$(find ./pdf_output -name "*.pdf" -exec stat -c%s {} \; 2>/dev/null | awk '{sum+=$1} END {print int(sum/1024)}')
+              echo "PDF文件总大小: ${total_size}KB"
+            fi
+            
+            # 打包输出
+            cd ./pdf_output
+            zip -r ../pdf-output-bundle.zip .
+            cd ..
+            echo "已创建打包文件: pdf-output-bundle.zip"
           else
-            echo "错误：未生成 pdf_output 目录。"
+            echo "错误：未生成 pdf_output 目录"
             exit 1
           fi
 
       - name: "上传生成物"
         uses: actions/upload-artifact@v4
         with:
-          name: pdf-documents-mark2pdf
+          name: pdf-output-pnpm
           path: |
             pdf_output/
-            pdf-output-archive.zip
+            pdf-output-bundle.zip
           retention-days: 7
