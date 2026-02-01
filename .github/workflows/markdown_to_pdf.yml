@@ -280,28 +280,44 @@ jobs:
               
               def fix_text_content(match):
                   text_content = match.group(1)
-                  # 将长行分割为较短的行
+                  # 将内容分割为行
                   lines = text_content.split('\n')
                   fixed_lines = []
                   
                   for line in lines:
-                      if len(line) > 80:  # 如果行太长
-                          # 尝试在合适的位置分割（空格、逗号、句号等）
-                          # 这个分割逻辑更智能，避免在单词中间分割
-                          words = re.split(r'(\s+)', line)
+                      if len(line.strip()) > 0:  # 跳过空行
+                          # 按空格分割单词
+                          words = line.strip().split(' ')
                           current_line = ''
                           for word in words:
-                              if len(current_line) + len(word) > 80 and word.strip():
-                                  fixed_lines.append(current_line.rstrip())
+                              if len(current_line) + len(word) + 1 > 80:  # 如果行太长
+                                  fixed_lines.append(current_line)
                                   current_line = word
                               else:
-                                  current_line += word
+                                  if current_line:
+                                      current_line += ' ' + word
+                                  else:
+                                      current_line = word
                           if current_line:
-                              fixed_lines.append(current_line.rstrip())
+                              fixed_lines.append(current_line)
                       else:
-                          fixed_lines.append(line)
+                          fixed_lines.append('')  # 保持空行
                   
-                  fixed_content = '\n'.join(fixed_lines)
+                  # 确保每行不超过80个字符
+                  final_lines = []
+                  for line in fixed_lines:
+                      if len(line) > 80:
+                          # 按字符分割，确保每行不超过80字符
+                          chunks = [line[i:i+80] for i in range(0, len(line), 80)]
+                          final_lines.extend(chunks)
+                      else:
+                          final_lines.append(line)
+                  
+                  # 保持原有的空行结构
+                  if text_content.endswith('\n'):
+                      final_lines.append('')
+                  
+                  fixed_content = '\n'.join(final_lines)
                   return f'```text\n{fixed_content}\n```'
               
               return text_pattern.sub(fix_text_content, content)
@@ -312,11 +328,11 @@ jobs:
                   with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                       content = f.read()
                   
-                  # 1. 保护代码块、内联代码和引用块
-                  protected_content, code_blocks, inline_code_blocks, quote_blocks = protect_code_blocks(content)
+                  # 1. 修复text代码块中的换行问题（优先处理）
+                  content = fix_text_code_blocks(content)
                   
-                  # 2. 修复text代码块中的换行问题
-                  protected_content = fix_text_code_blocks(protected_content)
+                  # 2. 保护代码块、内联代码和引用块
+                  protected_content, code_blocks, inline_code_blocks, quote_blocks = protect_code_blocks(content)
                   
                   # 3. 保护特殊格式的链接
                   protected_content = preserve_special_links(protected_content)
@@ -419,7 +435,7 @@ jobs:
           
           % 代码块设置 - 增大字体并确保自动换行
           \lstset{
-            basicstyle=\ttfamily\normalsize\selectfont, % 增大字体大小
+            basicstyle=\ttfamily\footnotesize\selectfont, % 使用footnotesize确保文本适配
             backgroundcolor=\color{codebg},
             frame=single,
             framesep=8pt, % 增加内边距
@@ -428,7 +444,7 @@ jobs:
             breaklines=true,
             breakatwhitespace=true,
             breakautoindent=true,
-            breakindent=25pt, % 增加换行缩进
+            breakindent=20pt, % 调整换行缩进
             postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
             showstringspaces=false,
             tabsize=2,
@@ -443,11 +459,13 @@ jobs:
             literate={~}{{\textasciitilde}}1, % 正确处理波浪号
             breaklines=true, % 强制换行
             prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
+            aboveskip=6pt, % 代码块上方间距
+            belowskip=6pt, % 代码块下方间距
           }
           
-          % 特殊处理text代码块 - 优化自动换行
+          % 特殊处理text代码块 - 增强换行处理
           \lstdefinestyle{textstyle}{
-            basicstyle=\ttfamily\normalsize\selectfont, % 增大字体
+            basicstyle=\ttfamily\footnotesize\selectfont, % 减小字体以确保换行
             backgroundcolor=\color{codebg},
             frame=single,
             framesep=8pt,
@@ -456,9 +474,9 @@ jobs:
             breaklines=true,
             breakatwhitespace=true,
             breakautoindent=true,
-            breakindent=25pt, % 增加换行缩进
+            breakindent=20pt, % 调整换行缩进
             postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
-            showstringspaces=false,
+            showstringspaces=true, % 显示空格，有助于调试
             tabsize=2,
             numbers=none,
             xleftmargin=15pt,
@@ -471,10 +489,9 @@ jobs:
             literate={~}{{\textasciitilde}}1, % 正确处理波浪号
             breaklines=true, % 强制换行
             prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
-            % 增强text代码块的换行设置
-            breakanywhere=true, % 允许在任何地方换行
-            prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookrightarrow}},
-            postbreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookleftarrow}},
+            aboveskip=6pt, % 代码块上方间距
+            belowskip=6pt, % 代码块下方间距
+            breakanywhere=true, % 允许在任何位置断行
           }
           
           % 引用块设置
@@ -584,6 +601,10 @@ jobs:
             #1
             \end{quotebox}
           }
+          
+          % 特殊处理text代码块的换行
+          \usepackage{fvextra}
+          \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,breakanywhere,commandchars=\\\{\}}
           EOF
       
       - name: "Create Pandoc filter for enhanced processing"
@@ -610,13 +631,30 @@ jobs:
           function CodeBlock(el)
             -- 处理代码块，如果是text类型则使用特殊样式
             if el.classes[1] == "text" then
-              -- 对于text代码块，使用更激进的换行设置
+              -- 确保text代码块的内容正确换行
+              local lines = {}
+              for line in string.gmatch(el.text, "[^\n]+") do
+                -- 如果行太长，尝试按80字符分割
+                if string.len(line) > 80 then
+                  local chunks = {}
+                  for i = 1, string.len(line), 80 do
+                    table.insert(chunks, string.sub(line, i, i + 79))
+                  end
+                  for _, chunk in ipairs(chunks) do
+                    table.insert(lines, chunk)
+                  end
+                else
+                  table.insert(lines, line)
+                end
+              end
+              
+              local formatted_text = table.concat(lines, "\n")
+              
               return pandoc.RawBlock('latex', 
-                '\\begin{lstlisting}[style=textstyle,breaklines=true,breakanywhere=true,breakindent=25pt]\n' .. 
-                el.text .. 
+                '\\begin{lstlisting}[style=textstyle]\n' .. 
+                formatted_text .. 
                 '\n\\end{lstlisting}')
             end
-            -- 其他代码块保持原样
             return el
           end
           
