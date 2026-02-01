@@ -271,14 +271,10 @@ jobs:
               content = re.sub(r'（0\.100）', r'（0~100）', content)
               # 修复其他类似的数字范围问题
               content = re.sub(r'（(\d+)[.,](\d{2,3})）', r'（\1~\2）', content)
-              # 修复表格中的数字范围问题
-              content = re.sub(r'(\d+)[,:.](\d{2,3})', r'\1~\2', content)
-              # 修复@符号
-              content = re.sub(r'(\d+)@(\d+)', r'\1~\2', content)
               return content
           
           def fix_text_code_blocks(content):
-              """修复text代码块中的换行问题 - 增强版本"""
+              """修复text代码块中的换行问题"""
               # 匹配```text代码块
               text_pattern = re.compile(r'```text\n(.*?)\n```', re.DOTALL)
               
@@ -290,19 +286,13 @@ jobs:
                   
                   for line in lines:
                       if len(line) > 100:  # 如果行太长
-                          # 在合适的位置分割，优先在空格处分割
+                          # 在合适的位置分割
                           words = line.split(' ')
                           current_line = ''
                           for word in words:
                               if len(current_line) + len(word) + 1 > 80:
-                                  if current_line:
-                                      fixed_lines.append(current_line)
-                                      current_line = word
-                                  else:
-                                      # 如果单词本身就超过80字符，强制分割
-                                      for i in range(0, len(word), 80):
-                                          fixed_lines.append(word[i:i+80])
-                                      current_line = ''
+                                  fixed_lines.append(current_line)
+                                  current_line = word
                               else:
                                   if current_line:
                                       current_line += ' ' + word
@@ -431,61 +421,58 @@ jobs:
           
           % 代码块设置 - 增大字体并确保自动换行
           \lstset{
-            basicstyle=\ttfamily\footnotesize\selectfont, % 使用footnotesize
+            basicstyle=\ttfamily\normalsize\selectfont, % 增大字体大小
             backgroundcolor=\color{codebg},
             frame=single,
-            framesep=6pt, % 减小内边距
-            framerule=0.8pt, % 边框稍细
+            framesep=8pt, % 增加内边距
+            framerule=1pt, % 边框稍粗
             rulecolor=\color{framecolor},
             breaklines=true,
             breakatwhitespace=true,
             breakautoindent=true,
-            breakindent=20pt, % 减小换行缩进
+            breakindent=25pt, % 增加换行缩进
             postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
             showstringspaces=false,
             tabsize=2,
             numbers=none,
-            xleftmargin=10pt,
-            xrightmargin=10pt,
+            xleftmargin=15pt,
+            xrightmargin=15pt,
             upquote=true,
             columns=fullflexible,
             keepspaces=true,
             escapeinside={(*@}{@*)}, % 允许在代码块中插入LaTeX命令
-            lineskip=1pt, % 减小行间距
+            lineskip=2pt, % 增加行间距
             literate={~}{{\textasciitilde}}1, % 正确处理波浪号
             breaklines=true, % 强制换行
             prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
-            captionpos=b, % 标题位置
           }
           
           % 特殊处理text代码块 - 优化自动换行
           \lstdefinestyle{textstyle}{
-            basicstyle=\ttfamily\scriptsize\selectfont, % 更小的字体
+            basicstyle=\ttfamily\normalsize\selectfont, % 增大字体
             backgroundcolor=\color{codebg},
             frame=single,
-            framesep=6pt,
-            framerule=0.8pt,
+            framesep=8pt,
+            framerule=1pt,
             rulecolor=\color{framecolor},
             breaklines=true,
-            breakatwhitespace=false, % 允许在任何位置断行
+            breakatwhitespace=true,
             breakautoindent=true,
-            breakindent=15pt, % 减小换行缩进
-            postbreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookrightarrow}},
+            breakindent=25pt, % 增加换行缩进
+            postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
             showstringspaces=false,
             tabsize=2,
             numbers=none,
-            xleftmargin=10pt,
-            xrightmargin=10pt,
+            xleftmargin=15pt,
+            xrightmargin=15pt,
             upquote=true,
-            columns=fixed, % 使用固定列宽
+            columns=fullflexible,
             keepspaces=true,
             escapeinside={},
-            lineskip=1pt, % 减小行间距
+            lineskip=2pt, % 增加行间距
             literate={~}{{\textasciitilde}}1, % 正确处理波浪号
             breaklines=true, % 强制换行
-            prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookleftarrow}}, % 换行前的标记
-            captionpos=b, % 标题位置
-            basewidth=0.48em, % 设置字符宽度
+            prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
           }
           
           % 引用块设置
@@ -595,9 +582,6 @@ jobs:
             #1
             \end{quotebox}
           }
-          
-          % 确保代码块中的长文本正确换行
-          \usepackage{seqsplit}
           EOF
       
       - name: "Create Pandoc filter for enhanced processing"
@@ -624,17 +608,9 @@ jobs:
           function CodeBlock(el)
             -- 处理代码块，如果是text类型则使用特殊样式
             if el.classes[1] == "text" then
-              -- 对text代码块进行特殊处理，确保长文本正确换行
-              local text = el.text
-              -- 替换特殊字符
-              text = text:gsub('~', '\\textasciitilde{}')
-              text = text:gsub('（0,100）', '（0~100）')
-              text = text:gsub('（0%.100）', '（0~100）')
-              text = text:gsub('（(%d+)[.,](%d%d%d）', '（%1~%2）')
-              
               return pandoc.RawBlock('latex', 
                 '\\begin{lstlisting}[style=textstyle]\n' .. 
-                text .. 
+                el.text .. 
                 '\n\\end{lstlisting}')
             end
             return el
@@ -651,8 +627,6 @@ jobs:
             text = text:gsub('（0,100）', '（0~100）')
             text = text:gsub('（0%.100）', '（0~100）')
             text = text:gsub('（(%d+)[.,](%d%d%d）', '（%1~%2）')
-            text = text:gsub('(%d+)[,:.]%s?(%d%d%d)', '%1~%2')
-            text = text:gsub('(%d+)@(%d+)', '%1~%2')
             
             return pandoc.Str(text)
           end
@@ -662,28 +636,6 @@ jobs:
             local text = el.text
             text = text:gsub('~', '\\textasciitilde{}')
             return pandoc.Code(text)
-          end
-          
-          -- 处理表格中的文本
-          function Table(el)
-            -- 遍历表格内容，修复特殊字符
-            for i, row in ipairs(el.rows) do
-              for j, cell in ipairs(row.cells) do
-                for k, block in ipairs(cell.contents) do
-                  if block.t == "Plain" or block.t == "Para" then
-                    for l, inline in ipairs(block.content) do
-                      if inline.t == "Str" then
-                        local text = inline.text
-                        text = text:gsub('(%d+)[,:.]%s?(%d%d%d)', '%1~%2')
-                        text = text:gsub('(%d+)@(%d+)', '%1~%2')
-                        inline.text = text
-                      end
-                    end
-                  end
-                end
-              end
-            end
-            return el
           end
           EOF
       
@@ -727,7 +679,7 @@ jobs:
             # 转换PDF - 使用增强设置
             echo "开始转换PDF..."
             
-            # 构建Pandoc命令 - 添加更多参数确保text代码块正确换行
+            # 构建Pandoc命令
             pandoc "$md_file" \
               --resource-path="$resource_paths" \
               -o "pdf_output/$dir_name/$base_name.pdf" \
@@ -747,8 +699,6 @@ jobs:
               --highlight-style=tango \
               -f markdown \
               -M date="$CURRENT_DATE" \
-              --variable linestretch=1.2 \
-              --variable fontsize=11pt \
               2>&1 | tee conversion.log
               
             conversion_status=$?
@@ -763,9 +713,6 @@ jobs:
               # 检查PDF文件大小
               pdf_size=$(du -h "pdf_output/$dir_name/$base_name.pdf" | cut -f1)
               echo "PDF文件大小: $pdf_size"
-              
-              # 检查text代码块是否换行正常（简单检查）
-              echo "检查PDF中的text代码块..."
             else
               echo "✗ 转换失败: $md_file"
               failed_count=$((failed_count + 1))
@@ -842,15 +789,13 @@ jobs:
           echo "4. 代码块字体增大，自动换行优化" >> pdf_output/README.md
           echo "5. 添加平铺式 'emakefun' 水印" >> pdf_output/README.md
           echo "6. 完全移除非表格内图片标签（图x:）" >> pdf_output/README.md
-          echo "7. 修复特殊字符问题（如0,100->0~100）" >> pdf_output/README.md
+          echo "7. 修复特殊字符问题（如0100->0~100）" >> pdf_output/README.md
           echo "8. 修复波浪号(~)显示问题" >> pdf_output/README.md
           echo "9. 特殊格式链接转为内联代码" >> pdf_output/README.md
           echo "10. 为引用块添加底色框" >> pdf_output/README.md
           echo "11. 修复text文本框换行问题" >> pdf_output/README.md
           echo "12. 优化水平线显示" >> pdf_output/README.md
           echo "13. 不输出picture文件夹，只保留resource文件夹" >> pdf_output/README.md
-          echo "14. 增强text代码块换行处理，解决文本溢出问题" >> pdf_output/README.md
-          echo "15. 修复表格中的数字范围问题（0:100, 0.100, 0@100等）" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
