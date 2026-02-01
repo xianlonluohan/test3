@@ -40,9 +40,7 @@ jobs:
             lmodern \
             tree \
             jq \
-            python3-pip \
-            texlive-science \
-            texlive-fonts-extra
+            python3-pip
           
           pip3 install beautifulsoup4 markdown-it-py
       
@@ -370,66 +368,84 @@ jobs:
             pdfborder={0 0 0},
           }
           
-          % 使用minted包代替listings，更好的代码高亮和换行支持
-          \usepackage{minted}
+          \usepackage{listings}
           \usepackage{xcolor}
           \usepackage{graphicx}
           \usepackage{float}
           \usepackage{placeins} % 用于控制浮动体位置
           \usepackage{mdframed} % 用于创建带背景的引用块
           \usepackage{xspace} % 用于正确处理波浪号
+          \usepackage{fvextra} % 更好的代码换行支持
           
           \definecolor{codebg}{rgb}{0.98,0.98,0.98}
           \definecolor{framecolor}{rgb}{0.8,0.8,0.8}
           \definecolor{quotebg}{rgb}{0.97,0.97,0.97}
           \definecolor{quoteframe}{rgb}{0.85,0.85,0.85}
           
-          % minted代码块设置 - 更好的换行支持
-          \setminted{
-            bgcolor=codebg,
+          % 代码块设置 - 增强换行功能
+          \lstset{
+            basicstyle=\ttfamily\footnotesize\selectfont,
+            backgroundcolor=\color{codebg},
             frame=single,
             framesep=8pt,
             framerule=1pt,
-            rulecolor=framecolor,
+            rulecolor=\color{framecolor},
             breaklines=true,
-            breakanywhere=true, % 允许在任何位置换行
-            breaksymbolleft={\small\ensuremath{\hookrightarrow}},
-            breaksymbolright={\small\ensuremath{\hookleftarrow}},
-            linenos=false,
-            xleftmargin=15pt,
-            xrightmargin=15pt,
-            numbersep=5pt,
-            fontsize=\footnotesize,
+            breakatwhitespace=true,
+            breakautoindent=true,
+            breakindent=25pt,
+            postbreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookrightarrow\space}},
+            showstringspaces=false,
             tabsize=2,
-            obeytabs=false,
-            showspaces=false,
-            showtabs=false,
-            baselinestretch=1.2,
-            escapeinside=||,
-            autogobble=true,
+            numbers=none,
+            xleftmargin=15pt,
+            xrightmargin=15pt,
+            upquote=true,
+            columns=fullflexible, % 重要：允许灵活列宽，支持更好的换行
+            keepspaces=true,
+            escapeinside={(*@}{@*)},
+            lineskip=2pt,
+            literate={~}{{\textasciitilde}}1,
+            breaklines=true,
+            prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookleftarrow\space}},
+            breakanywhere=true, % 允许在任何位置断行
+            breakbyspace=true,
+            breakbytoken=false,
+            aboveskip=6pt,
+            belowskip=6pt,
           }
           
-          % 特殊设置text代码块
-          \newmintinline[inlinecode]{text}{
-            breaklines=true,
-            breakanywhere=true,
-            fontsize=\small,
-          }
-          
-          % 为text代码块创建特殊环境
-          \newminted{text}{
-            breaklines=true,
-            breakanywhere=true,
-            breaksymbolleft={\small\ensuremath{\hookrightarrow}},
-            breaksymbolright={\small\ensuremath{\hookleftarrow}},
+          % 特殊处理text代码块 - 优化自动换行
+          \lstdefinestyle{textstyle}{
+            basicstyle=\ttfamily\footnotesize\selectfont,
+            backgroundcolor=\color{codebg},
             frame=single,
             framesep=8pt,
             framerule=1pt,
-            rulecolor=framecolor,
-            bgcolor=codebg,
-            fontsize=\footnotesize,
+            rulecolor=\color{framecolor},
+            breaklines=true,
+            breakatwhitespace=true,
+            breakautoindent=true,
+            breakindent=25pt,
+            postbreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookrightarrow\space}},
+            showstringspaces=true, % 显示空格，有助于调试长文本
+            tabsize=2,
+            numbers=none,
             xleftmargin=15pt,
             xrightmargin=15pt,
+            upquote=true,
+            columns=fullflexible,
+            keepspaces=true,
+            escapeinside={},
+            lineskip=2pt,
+            literate={~}{{\textasciitilde}}1,
+            breaklines=true,
+            prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookleftarrow\space}},
+            breakanywhere=true, % 重要：允许在任何字符位置换行
+            breakbyspace=true,
+            breakbytoken=false,
+            aboveskip=6pt,
+            belowskip=6pt,
           }
           
           % 引用块设置
@@ -506,7 +522,7 @@ jobs:
           \AddToShipoutPictureBG{\BackgroundPicture}
           
           % 图片处理设置
-          \graphicspath{{./}{./resource/}}
+          \graphicspath{{./}{./resource/}{./picture/}} % 添加picture路径
           
           % 设置图片最大宽度为行宽，并居中
           \makeatletter
@@ -529,20 +545,12 @@ jobs:
           \catcode`\~=12
           \mathchardef\tilde="013E
           
-          % Pandoc过滤器：处理引用块
-          \usepackage{fvextra}
-          \usepackage{csquotes}
-          
           % 自定义Markdown到LaTeX的转换
           \newcommand{\quoteblock}[1]{%
             \begin{quotebox}
             #1
             \end{quotebox}
           }
-          
-          % 重命名minted环境，避免冲突
-          \renewcommand{\listingscaption}{代码}
-          \renewcommand{\listoflistingscaption}{代码列表}
           EOF
       
       - name: "Create Pandoc filter for enhanced processing"
@@ -567,28 +575,40 @@ jobs:
           end
           
           function CodeBlock(el)
-            -- 处理代码块，使用minted代替listings
-            local lang = el.classes[1] or "text"
-            local content = el.text
-            
-            -- 确保text代码块的内容正确换行
-            if lang == "text" then
-              -- 对于text代码块，确保内容不会被错误转义
-              content = content:gsub("\\", "\\textbackslash{}")
-              content = content:gsub("~", "\\textasciitilde{}")
-              content = content:gsub("^%s+", "")
-              content = content:gsub("%s+$", "")
+            -- 处理代码块，如果是text类型则使用特殊样式
+            if el.classes[1] == "text" then
+              -- 清理文本，确保换行正确
+              local text = el.text:gsub("\r\n", "\n"):gsub("\r", "\n")
+              
+              -- 对长文本进行预处理，添加换行符
+              local lines = {}
+              for line in text:gmatch("[^\n]+") do
+                if #line > 80 then
+                  -- 如果行太长，按80字符分割
+                  local chunks = {}
+                  for i = 1, #line, 80 do
+                    table.insert(chunks, line:sub(i, i + 79))
+                  end
+                  for _, chunk in ipairs(chunks) do
+                    table.insert(lines, chunk)
+                  end
+                else
+                  table.insert(lines, line)
+                end
+              end
+              
+              local formatted_text = table.concat(lines, "\n")
               
               return pandoc.RawBlock('latex', 
-                '\\begin{minted}[breaklines=true, breakanywhere=true]{text}\n' .. 
-                content .. 
-                '\n\\end{minted}')
+                '\\begin{lstlisting}[style=textstyle]\n' .. 
+                formatted_text .. 
+                '\n\\end{lstlisting}')
             else
-              -- 其他代码块使用minted
+              -- 其他代码块
               return pandoc.RawBlock('latex', 
-                '\\begin{minted}{' .. lang .. '}\n' .. 
-                content .. 
-                '\n\\end{minted}')
+                '\\begin{lstlisting}\n' .. 
+                el.text .. 
+                '\n\\end{lstlisting}')
             end
           end
           
@@ -611,16 +631,7 @@ jobs:
             -- 处理内联代码中的波浪号
             local text = el.text
             text = text:gsub('~', '\\textasciitilde{}')
-            text = text:gsub("\\", "\\textbackslash{}")
             return pandoc.Code(text)
-          end
-          
-          function RawBlock(el)
-            -- 确保已有的LaTeX代码块不被处理
-            if el.format == "tex" or el.format == "latex" then
-              return el
-            end
-            return nil
           end
           EOF
       
@@ -655,7 +666,7 @@ jobs:
             md_dir=$(dirname "$md_file")
             
             # 构建资源路径
-            resource_paths="$md_dir:$md_dir/../resource:.:./resource"
+            resource_paths="$md_dir:$md_dir/../resource:$md_dir/../picture:.:./resource:./picture"
             
             echo "资源路径: $resource_paths"
             
@@ -664,11 +675,12 @@ jobs:
             # 转换PDF - 使用增强设置
             echo "开始转换PDF..."
             
-            # 构建Pandoc命令 - 使用minted而不是listings
+            # 构建Pandoc命令
             pandoc "$md_file" \
               --resource-path="$resource_paths" \
               -o "pdf_output/$dir_name/$base_name.pdf" \
               --pdf-engine=xelatex \
+              --listings \
               --include-in-header=header.tex \
               --lua-filter=quote-filter.lua \
               -V mainfont="Noto Serif CJK SC" \
@@ -680,10 +692,9 @@ jobs:
               -V linkcolor=blue \
               -V urlcolor=blue \
               --wrap=auto \
+              --highlight-style=tango \
               -f markdown \
               -M date="$CURRENT_DATE" \
-              --highlight-style=tango \
-              --listings \
               2>&1 | tee conversion.log
               
             conversion_status=$?
@@ -726,7 +737,7 @@ jobs:
         run: |
           echo "复制resource目录到输出目录..."
           
-          # 查找所有有PDF文件的目录，只复制resource目录
+          # 查找所有有PDF文件的目录，复制resource和picture目录
           find pdf_output -name "*.pdf" -type f | while read pdf_file; do
             pdf_dir=$(dirname "$pdf_file")
             rel_dir=${pdf_dir#pdf_output/}
@@ -735,6 +746,12 @@ jobs:
             if [ -d "$rel_dir/resource" ]; then
               echo "复制 $rel_dir/resource 到 $pdf_dir/"
               cp -r "$rel_dir/resource" "$pdf_dir/" 2>/dev/null || echo "无法复制 $rel_dir/resource"
+            fi
+            
+            # 复制picture目录
+            if [ -d "$rel_dir/picture" ]; then
+              echo "复制 $rel_dir/picture 到 $pdf_dir/"
+              cp -r "$rel_dir/picture" "$pdf_dir/" 2>/dev/null || echo "无法复制 $rel_dir/picture"
             fi
           done
       
@@ -771,16 +788,16 @@ jobs:
           echo "1. 保护代码块内容，避免<>被移除" >> pdf_output/README.md
           echo "2. 图片位置固定，避免浮动错位" >> pdf_output/README.md
           echo "3. 表格内图片保持原样显示" >> pdf_output/README.md
-          echo "4. 代码块字体增大，自动换行优化（使用minted包）" >> pdf_output/README.md
+          echo "4. 代码块字体增大，自动换行优化" >> pdf_output/README.md
           echo "5. 添加平铺式 'emakefun' 水印" >> pdf_output/README.md
           echo "6. 完全移除非表格内图片标签（图x:）" >> pdf_output/README.md
           echo "7. 修复特殊字符问题（如0100->0~100）" >> pdf_output/README.md
           echo "8. 修复波浪号(~)显示问题" >> pdf_output/README.md
           echo "9. 特殊格式链接转为内联代码" >> pdf_output/README.md
           echo "10. 为引用块添加底色框" >> pdf_output/README.md
-          echo "11. text代码块换行问题已修复" >> pdf_output/README.md
+          echo "11. 修复text文本框换行问题" >> pdf_output/README.md
           echo "12. 优化水平线显示" >> pdf_output/README.md
-          echo "13. 不输出picture文件夹，只保留resource文件夹" >> pdf_output/README.md
+          echo "13. 支持resource和picture文件夹" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
@@ -810,7 +827,13 @@ jobs:
               resource_exists=" (含resource资源)"
             fi
             
-            echo "- [$file_name]($rel_path) ($file_size)$resource_exists" >> pdf_output/README.md
+            # 检查是否有picture目录
+            picture_exists=""
+            if [ -d "$pdf_dir/picture" ]; then
+              picture_exists=" (含picture图片)"
+            fi
+            
+            echo "- [$file_name]($rel_path) ($file_size)$resource_exists$picture_exists" >> pdf_output/README.md
           done
           
           echo "" >> pdf_output/README.md
@@ -818,8 +841,9 @@ jobs:
           
           # 统计有resource目录的PDF数量
           resource_dirs_count=$(find pdf_output -type d -name "resource" 2>/dev/null | wc -l)
+          picture_dirs_count=$(find pdf_output -type d -name "picture" 2>/dev/null | wc -l)
           
-          echo "总计: $PDF_COUNT 个 PDF 文件, 总大小约 ${total_size_mb}MB, ${resource_dirs_count} 个目录包含resource资源" >> pdf_output/README.md
+          echo "总计: $PDF_COUNT 个 PDF 文件, 总大小约 ${total_size_mb}MB, ${resource_dirs_count} 个目录包含resource资源, ${picture_dirs_count} 个目录包含picture图片" >> pdf_output/README.md
       
       - name: "Create zip archive for release"
         if: startsWith(github.ref, 'refs/tags/')
