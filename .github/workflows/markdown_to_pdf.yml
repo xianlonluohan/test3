@@ -54,19 +54,29 @@ jobs:
           def protect_code_blocks(content):
               """保护代码块，防止被HTML转换处理"""
               code_blocks = []
+              text_code_blocks = []
+              inline_code_blocks = []
+              quote_blocks = []
               protected_content = content
               
-              # 保护代码块（```code```格式）
+              # 1. 先保护text代码块
+              def replace_text_code_block(match):
+                  text_code_blocks.append(match.group(0))
+                  return f"@@@TEXT_CODE_BLOCK_{len(text_code_blocks)-1}@@@"
+              
+              text_code_pattern = re.compile(r'```text\n(.*?)\n```', re.DOTALL)
+              protected_content = text_code_pattern.sub(replace_text_code_block, protected_content)
+              
+              # 2. 保护其他代码块（非text）
               def replace_code_block(match):
                   code_blocks.append(match.group(0))
                   return f"@@@CODE_BLOCK_{len(code_blocks)-1}@@@"
               
-              # 匹配标准的Markdown代码块
-              code_pattern = re.compile(r'```(?:[a-zA-Z0-9_+-]*\n)?.*?\n```', re.DOTALL)
+              # 匹配非text的代码块
+              code_pattern = re.compile(r'```(?!text)(?:[a-zA-Z0-9_+-]*\n)?.*?\n```', re.DOTALL)
               protected_content = code_pattern.sub(replace_code_block, protected_content)
               
-              # 保护内联代码（`code`格式）
-              inline_code_blocks = []
+              # 3. 保护内联代码（`code`格式）
               def replace_inline_code(match):
                   inline_code_blocks.append(match.group(0))
                   return f"@@@INLINE_CODE_{len(inline_code_blocks)-1}@@@"
@@ -74,8 +84,7 @@ jobs:
               inline_pattern = re.compile(r'`[^`\n]+`')
               protected_content = inline_pattern.sub(replace_inline_code, protected_content)
               
-              # 保护引用块（> 开头的内容）
-              quote_blocks = []
+              # 4. 保护引用块（> 开头的内容）
               def replace_quote_block(match):
                   quote_blocks.append(match.group(0))
                   return f"@@@QUOTE_BLOCK_{len(quote_blocks)-1}@@@"
@@ -84,13 +93,18 @@ jobs:
               quote_pattern = re.compile(r'^(?:>.*\n?)+', re.MULTILINE)
               protected_content = quote_pattern.sub(replace_quote_block, protected_content)
               
-              return protected_content, code_blocks, inline_code_blocks, quote_blocks
+              return protected_content, code_blocks, text_code_blocks, inline_code_blocks, quote_blocks
           
-          def restore_code_blocks(content, code_blocks, inline_code_blocks, quote_blocks):
+          def restore_code_blocks(content, code_blocks, text_code_blocks, inline_code_blocks, quote_blocks):
               """恢复保护的代码块"""
               restored_content = content
               
-              # 恢复代码块
+              # 恢复text代码块
+              for i, text_code_block in enumerate(text_code_blocks):
+                  placeholder = f"@@@TEXT_CODE_BLOCK_{i}@@@"
+                  restored_content = restored_content.replace(placeholder, text_code_block)
+              
+              # 恢复其他代码块
               for i, code_block in enumerate(code_blocks):
                   placeholder = f"@@@CODE_BLOCK_{i}@@@"
                   restored_content = restored_content.replace(placeholder, code_block)
@@ -285,21 +299,18 @@ jobs:
                   fixed_lines = []
                   
                   for line in lines:
-                      if len(line) > 100:  # 如果行太长
-                          # 在合适的位置分割
-                          words = line.split(' ')
-                          current_line = ''
-                          for word in words:
-                              if len(current_line) + len(word) + 1 > 80:
-                                  fixed_lines.append(current_line)
-                                  current_line = word
-                              else:
-                                  if current_line:
-                                      current_line += ' ' + word
-                                  else:
-                                      current_line = word
-                          if current_line:
-                              fixed_lines.append(current_line)
+                      if len(line) > 80:  # 如果行太长
+                          # 在合适的位置分割，优先在空格处分割
+                          while len(line) > 80:
+                              # 查找前80个字符内最后一个空格
+                              split_point = line[:80].rfind(' ')
+                              if split_point == -1:  # 没有空格，强制在80字符处分割
+                                  split_point = 80
+                              
+                              fixed_lines.append(line[:split_point])
+                              line = line[split_point:].strip()
+                          if line:  # 剩余部分
+                              fixed_lines.append(line)
                       else:
                           fixed_lines.append(line)
                   
@@ -314,11 +325,11 @@ jobs:
                   with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                       content = f.read()
                   
-                  # 1. 保护代码块、内联代码和引用块
-                  protected_content, code_blocks, inline_code_blocks, quote_blocks = protect_code_blocks(content)
+                  # 1. 修复text代码块中的换行问题
+                  content = fix_text_code_blocks(content)
                   
-                  # 2. 修复text代码块中的换行问题
-                  protected_content = fix_text_code_blocks(protected_content)
+                  # 2. 保护代码块、内联代码和引用块
+                  protected_content, code_blocks, text_code_blocks, inline_code_blocks, quote_blocks = protect_code_blocks(content)
                   
                   # 3. 保护特殊格式的链接
                   protected_content = preserve_special_links(protected_content)
@@ -351,11 +362,10 @@ jobs:
                   processed_content = link_pattern.sub(replace_link_tag, processed_content)
                   
                   # 9. 移除其他HTML标签（不处理代码块中的）
-                  # 小心处理，避免移除代码中的<>
-                  processed_content = re.sub(r'<(?!@@@CODE_BLOCK_|@@@INLINE_CODE_|@@@QUOTE_BLOCK_)(?!URL_PLACEHOLDER)(?!\/?code>)(?!\/?pre>)(?!\/?span>)(?!\/?div>)(?!\/?p>)(?!\/?br>)[^>]+>', '', processed_content)
+                  processed_content = re.sub(r'<(?!@@@CODE_BLOCK_|@@@TEXT_CODE_BLOCK_|@@@INLINE_CODE_|@@@QUOTE_BLOCK_)(?!URL_PLACEHOLDER)(?!\/?code>)(?!\/?pre>)(?!\/?span>)(?!\/?div>)(?!\/?p>)(?!\/?br>)[^>]+>', '', processed_content)
                   
                   # 10. 恢复代码块
-                  final_content = restore_code_blocks(processed_content, code_blocks, inline_code_blocks, quote_blocks)
+                  final_content = restore_code_blocks(processed_content, code_blocks, text_code_blocks, inline_code_blocks, quote_blocks)
                   
                   # 保存处理后的文件
                   with open(filepath, 'w', encoding='utf-8') as f:
@@ -449,7 +459,7 @@ jobs:
           
           % 特殊处理text代码块 - 优化自动换行
           \lstdefinestyle{textstyle}{
-            basicstyle=\ttfamily\normalsize\selectfont, % 增大字体
+            basicstyle=\ttfamily\small\selectfont, % 使用小号字体
             backgroundcolor=\color{codebg},
             frame=single,
             framesep=8pt,
@@ -459,7 +469,7 @@ jobs:
             breakatwhitespace=true,
             breakautoindent=true,
             breakindent=25pt, % 增加换行缩进
-            postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
+            postbreak=\mbox{\textcolor{gray}{$\hookrightarrow$}\space},
             showstringspaces=false,
             tabsize=2,
             numbers=none,
@@ -468,11 +478,13 @@ jobs:
             upquote=true,
             columns=fullflexible,
             keepspaces=true,
-            escapeinside={},
-            lineskip=2pt, % 增加行间距
+            lineskip=3pt, % 增加行间距
             literate={~}{{\textasciitilde}}1, % 正确处理波浪号
             breaklines=true, % 强制换行
-            prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
+            prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookleftarrow}},
+            captionpos=b,
+            abovecaptionskip=5pt,
+            belowcaptionskip=5pt,
           }
           
           % 引用块设置
@@ -796,6 +808,7 @@ jobs:
           echo "11. 修复text文本框换行问题" >> pdf_output/README.md
           echo "12. 优化水平线显示" >> pdf_output/README.md
           echo "13. 不输出picture文件夹，只保留resource文件夹" >> pdf_output/README.md
+          echo "14. 特殊处理text代码块，确保内容自动换行" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
