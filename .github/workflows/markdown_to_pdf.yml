@@ -273,31 +273,69 @@ jobs:
               content = re.sub(r'（(\d+)[.,](\d{2,3})）', r'（\1~\2）', content)
               return content
           
+          def fix_text_code_blocks(content):
+              """修复text代码块中的换行问题"""
+              # 匹配```text代码块
+              text_pattern = re.compile(r'```text\n(.*?)\n```', re.DOTALL)
+              
+              def fix_text_content(match):
+                  text_content = match.group(1)
+                  # 按句子或自然断点分割，保持语义完整
+                  lines = text_content.split('\n')
+                  fixed_lines = []
+                  
+                  for line in lines:
+                      if len(line) > 80:  # 如果行太长
+                          # 在中文标点或空格处分割，保持语义完整
+                          # 优先在中文标点处分割
+                          parts = re.split(r'([。！？；：,，.])', line)
+                          current_line = ''
+                          for i in range(0, len(parts), 2):
+                              part = parts[i] + (parts[i+1] if i+1 < len(parts) else '')
+                              if len(current_line) + len(part) > 80:
+                                  if current_line:
+                                      fixed_lines.append(current_line)
+                                  current_line = part
+                              else:
+                                  current_line += part
+                          if current_line:
+                              fixed_lines.append(current_line)
+                      else:
+                          fixed_lines.append(line)
+                  
+                  fixed_content = '\n'.join(fixed_lines)
+                  return f'```text\n{fixed_content}\n```'
+              
+              return text_pattern.sub(fix_text_content, content)
+          
           def process_markdown_file(filepath):
               print(f"处理文件: {filepath}")
               try:
                   with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                       content = f.read()
                   
-                  # 1. 保护代码块、内联代码和引用块
+                  # 1. 修复text代码块中的换行问题（放在最前面处理）
+                  content = fix_text_code_blocks(content)
+                  
+                  # 2. 保护代码块、内联代码和引用块
                   protected_content, code_blocks, inline_code_blocks, quote_blocks = protect_code_blocks(content)
                   
-                  # 2. 保护特殊格式的链接
+                  # 3. 保护特殊格式的链接
                   protected_content = preserve_special_links(protected_content)
                   
-                  # 3. 处理非表格内的图片，确保正确位置
+                  # 4. 处理非表格内的图片，确保正确位置
                   processed_content = process_images_in_content(protected_content)
                   
-                  # 4. 移除图片标签和<center>标签
+                  # 5. 移除图片标签和<center>标签
                   processed_content = remove_image_labels_and_figures(processed_content)
                   
-                  # 5. 修复特殊字符问题
+                  # 6. 修复特殊字符问题
                   processed_content = fix_special_characters(processed_content)
                   
-                  # 6. 修复波浪号显示问题
+                  # 7. 修复波浪号显示问题
                   processed_content = fix_tilde_in_text(processed_content)
                   
-                  # 7. 处理链接标签（不处理代码块中的）
+                  # 8. 处理链接标签（不处理代码块中的）
                   link_pattern = re.compile(r'<a\s+([^>]+)>(.*?)</a>', re.IGNORECASE | re.DOTALL)
                   
                   def replace_link_tag(match):
@@ -312,11 +350,11 @@ jobs:
                   
                   processed_content = link_pattern.sub(replace_link_tag, processed_content)
                   
-                  # 8. 移除其他HTML标签（不处理代码块中的）
+                  # 9. 移除其他HTML标签（不处理代码块中的）
                   # 小心处理，避免移除代码中的<>
                   processed_content = re.sub(r'<(?!@@@CODE_BLOCK_|@@@INLINE_CODE_|@@@QUOTE_BLOCK_)(?!URL_PLACEHOLDER)(?!\/?code>)(?!\/?pre>)(?!\/?span>)(?!\/?div>)(?!\/?p>)(?!\/?br>)[^>]+>', '', processed_content)
                   
-                  # 9. 恢复代码块
+                  # 10. 恢复代码块
                   final_content = restore_code_blocks(processed_content, code_blocks, inline_code_blocks, quote_blocks)
                   
                   # 保存处理后的文件
@@ -381,50 +419,48 @@ jobs:
           \definecolor{quotebg}{rgb}{0.97,0.97,0.97}
           \definecolor{quoteframe}{rgb}{0.85,0.85,0.85}
           
-          % 代码块设置 - 增强换行功能
+          % 代码块设置 - 增大字体并确保自动换行
           \lstset{
-            basicstyle=\ttfamily\footnotesize\selectfont,
+            basicstyle=\ttfamily\normalsize\selectfont, % 增大字体大小
             backgroundcolor=\color{codebg},
             frame=single,
-            framesep=8pt,
-            framerule=1pt,
+            framesep=8pt, % 增加内边距
+            framerule=1pt, % 边框稍粗
             rulecolor=\color{framecolor},
             breaklines=true,
             breakatwhitespace=true,
             breakautoindent=true,
-            breakindent=25pt,
-            postbreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookrightarrow\space}},
+            breakindent=25pt, % 增加换行缩进
+            postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
             showstringspaces=false,
             tabsize=2,
             numbers=none,
             xleftmargin=15pt,
             xrightmargin=15pt,
             upquote=true,
-            columns=fullflexible, % 重要：允许灵活列宽，支持更好的换行
+            columns=fullflexible,
             keepspaces=true,
-            escapeinside={(*@}{@*)},
-            lineskip=2pt,
-            literate={~}{{\textasciitilde}}1,
-            breaklines=true,
-            prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookleftarrow\space}},
-            aboveskip=6pt,
-            belowskip=6pt,
+            escapeinside={(*@}{@*)}, % 允许在代码块中插入LaTeX命令
+            lineskip=2pt, % 增加行间距
+            literate={~}{{\textasciitilde}}1, % 正确处理波浪号
+            breaklines=true, % 强制换行
+            prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
           }
           
-          % 特殊处理text代码块 - 优化自动换行
+          % 特殊处理text代码块 - 优化自动换行，特别针对中文文本
           \lstdefinestyle{textstyle}{
-            basicstyle=\ttfamily\footnotesize\selectfont,
+            basicstyle=\ttfamily\normalsize\selectfont, % 增大字体
             backgroundcolor=\color{codebg},
             frame=single,
             framesep=8pt,
             framerule=1pt,
             rulecolor=\color{framecolor},
             breaklines=true,
-            breakatwhitespace=true,
+            breakatwhitespace=false, % 针对中文，不只在空格处断行
             breakautoindent=true,
-            breakindent=25pt,
-            postbreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookrightarrow\space}},
-            showstringspaces=true, % 显示空格，有助于调试长文本
+            breakindent=25pt, % 增加换行缩进
+            postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
+            showstringspaces=false,
             tabsize=2,
             numbers=none,
             xleftmargin=15pt,
@@ -433,14 +469,11 @@ jobs:
             columns=fullflexible,
             keepspaces=true,
             escapeinside={},
-            lineskip=2pt,
-            literate={~}{{\textasciitilde}}1,
-            breaklines=true,
-            prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookleftarrow\space}},
-            aboveskip=6pt,
-            belowskip=6pt,
-            % 使用breakable选项来允许在任何位置断行
-            breakable=true,
+            lineskip=2pt, % 增加行间距
+            literate={~}{{\textasciitilde}}1, % 正确处理波浪号
+            breaklines=true, % 强制换行
+            prebreak=\mbox{\textcolor{red}{$\hookleftarrow$}\space}, % 换行前的标记
+            breakanywhere=true, % 允许在任何位置断行，特别针对中文
           }
           
           % 引用块设置
@@ -517,7 +550,7 @@ jobs:
           \AddToShipoutPictureBG{\BackgroundPicture}
           
           % 图片处理设置
-          \graphicspath{{./}{./resource/}{./picture/}} % 添加picture路径
+          \graphicspath{{./}{./resource/}}
           
           % 设置图片最大宽度为行宽，并居中
           \makeatletter
@@ -539,6 +572,10 @@ jobs:
           % 正确处理波浪号
           \catcode`\~=12
           \mathchardef\tilde="013E
+          
+          % Pandoc过滤器：处理引用块
+          \usepackage{fvextra}
+          \usepackage{csquotes}
           
           % 自定义Markdown到LaTeX的转换
           \newcommand{\quoteblock}[1]{%
@@ -572,39 +609,12 @@ jobs:
           function CodeBlock(el)
             -- 处理代码块，如果是text类型则使用特殊样式
             if el.classes[1] == "text" then
-              -- 清理文本，确保换行正确
-              local text = el.text:gsub("\r\n", "\n"):gsub("\r", "\n")
-              
-              -- 对长文本进行预处理，添加换行符
-              local lines = {}
-              for line in text:gmatch("[^\n]+") do
-                if #line > 80 then
-                  -- 如果行太长，按80字符分割
-                  local chunks = {}
-                  for i = 1, #line, 80 do
-                    table.insert(chunks, line:sub(i, i + 79))
-                  end
-                  for _, chunk in ipairs(chunks) do
-                    table.insert(lines, chunk)
-                  end
-                else
-                  table.insert(lines, line)
-                end
-              end
-              
-              local formatted_text = table.concat(lines, "\n")
-              
               return pandoc.RawBlock('latex', 
                 '\\begin{lstlisting}[style=textstyle]\n' .. 
-                formatted_text .. 
-                '\n\\end{lstlisting}')
-            else
-              -- 其他代码块
-              return pandoc.RawBlock('latex', 
-                '\\begin{lstlisting}\n' .. 
                 el.text .. 
                 '\n\\end{lstlisting}')
             end
+            return el
           end
           
           function Str(el)
@@ -661,7 +671,7 @@ jobs:
             md_dir=$(dirname "$md_file")
             
             # 构建资源路径
-            resource_paths="$md_dir:$md_dir/../resource:$md_dir/../picture:.:./resource:./picture"
+            resource_paths="$md_dir:$md_dir/../resource:.:./resource"
             
             echo "资源路径: $resource_paths"
             
@@ -732,7 +742,7 @@ jobs:
         run: |
           echo "复制resource目录到输出目录..."
           
-          # 查找所有有PDF文件的目录，复制resource和picture目录
+          # 查找所有有PDF文件的目录，只复制resource目录
           find pdf_output -name "*.pdf" -type f | while read pdf_file; do
             pdf_dir=$(dirname "$pdf_file")
             rel_dir=${pdf_dir#pdf_output/}
@@ -741,12 +751,6 @@ jobs:
             if [ -d "$rel_dir/resource" ]; then
               echo "复制 $rel_dir/resource 到 $pdf_dir/"
               cp -r "$rel_dir/resource" "$pdf_dir/" 2>/dev/null || echo "无法复制 $rel_dir/resource"
-            fi
-            
-            # 复制picture目录
-            if [ -d "$rel_dir/picture" ]; then
-              echo "复制 $rel_dir/picture 到 $pdf_dir/"
-              cp -r "$rel_dir/picture" "$pdf_dir/" 2>/dev/null || echo "无法复制 $rel_dir/picture"
             fi
           done
       
@@ -790,9 +794,9 @@ jobs:
           echo "8. 修复波浪号(~)显示问题" >> pdf_output/README.md
           echo "9. 特殊格式链接转为内联代码" >> pdf_output/README.md
           echo "10. 为引用块添加底色框" >> pdf_output/README.md
-          echo "11. 修复text文本框换行问题" >> pdf_output/README.md
+          echo "11. 修复text文本框换行问题（特别针对中文文本）" >> pdf_output/README.md
           echo "12. 优化水平线显示" >> pdf_output/README.md
-          echo "13. 支持resource和picture文件夹" >> pdf_output/README.md
+          echo "13. 不输出picture文件夹，只保留resource文件夹" >> pdf_output/README.md
           echo "" >> pdf_output/README.md
           
           echo "## 文件列表" >> pdf_output/README.md
@@ -822,13 +826,7 @@ jobs:
               resource_exists=" (含resource资源)"
             fi
             
-            # 检查是否有picture目录
-            picture_exists=""
-            if [ -d "$pdf_dir/picture" ]; then
-              picture_exists=" (含picture图片)"
-            fi
-            
-            echo "- [$file_name]($rel_path) ($file_size)$resource_exists$picture_exists" >> pdf_output/README.md
+            echo "- [$file_name]($rel_path) ($file_size)$resource_exists" >> pdf_output/README.md
           done
           
           echo "" >> pdf_output/README.md
@@ -836,9 +834,8 @@ jobs:
           
           # 统计有resource目录的PDF数量
           resource_dirs_count=$(find pdf_output -type d -name "resource" 2>/dev/null | wc -l)
-          picture_dirs_count=$(find pdf_output -type d -name "picture" 2>/dev/null | wc -l)
           
-          echo "总计: $PDF_COUNT 个 PDF 文件, 总大小约 ${total_size_mb}MB, ${resource_dirs_count} 个目录包含resource资源, ${picture_dirs_count} 个目录包含picture图片" >> pdf_output/README.md
+          echo "总计: $PDF_COUNT 个 PDF 文件, 总大小约 ${total_size_mb}MB, ${resource_dirs_count} 个目录包含resource资源" >> pdf_output/README.md
       
       - name: "Create zip archive for release"
         if: startsWith(github.ref, 'refs/tags/')
