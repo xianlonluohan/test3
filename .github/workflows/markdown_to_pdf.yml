@@ -711,34 +711,35 @@ jobs:
             echo "开始转换PDF..."
             
             # 构建Pandoc命令，添加中文断行优化
-            # 注意：移除了末尾的反引号字符
-            pandoc "$md_file" \
-              --resource-path="$resource_paths" \
-              -o "pdf_output/$dir_name/$base_name.pdf" \
+            pandoc_cmd="pandoc \"$md_file\" \
+              --resource-path=\"$resource_paths\" \
+              -o \"pdf_output/$dir_name/$base_name.pdf\" \
               --pdf-engine=xelatex \
               --listings \
               --include-in-header=header.tex \
               --lua-filter=quote-filter.lua \
-              -V mainfont="Noto Serif CJK SC" \
-              -V sansfont="Noto Sans CJK SC" \
-              -V monofont="Noto Sans Mono CJK SC" \
+              -V mainfont=\"Noto Serif CJK SC\" \
+              -V sansfont=\"Noto Sans CJK SC\" \
+              -V monofont=\"Noto Sans Mono CJK SC\" \
               -V geometry:margin=1.2in \
               -V geometry:a4paper \
               -V colorlinks=true \
               -V linkcolor=blue \
               -V urlcolor=blue \
-              -V CJKmainfont="Noto Serif CJK SC" \
-              -V CJKsansfont="Noto Sans CJK SC" \
-              -V CJKmonofont="Noto Sans Mono CJK SC" \
-              -V CJKoptions="BreakAfterSymbols=true" \
+              -V CJKmainfont=\"Noto Serif CJK SC\" \
+              -V CJKsansfont=\"Noto Sans CJK SC\" \
+              -V CJKmonofont=\"Noto Sans Mono CJK SC\" \
+              -V CJKoptions=\"BreakAfterSymbols=true\" \
               --wrap=auto \
               --highlight-style=tango \
               -f markdown \
-              -M date="$CURRENT_DATE" \
-              --variable="xeCJKenbreak=true" \
-              2>&1 | tee conversion.log
+              -M date=\"$CURRENT_DATE\" \
+              --variable=\"xeCJKenbreak=true\""
               
-            conversion_status=$?
+            echo "执行命令: $pandoc_cmd"
+            eval "$pandoc_cmd" 2>&1 | tee conversion.log
+              
+            conversion_status=${PIPESTATUS[0]}
             
             set -e
             
