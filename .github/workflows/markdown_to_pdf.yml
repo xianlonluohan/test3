@@ -2,9 +2,11 @@ name: Markdown to PDF Converter
 
 on:
   push:
-    tags:
-      - 'v*'  # 仅当创建v开头的tag时触发
-      - '*.*.*'  # 或者任何语义化版本tag
+    branches: ["main", "master"]
+    tags: ["v*", "pdf-*"]
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
   convert-and-release:
