@@ -375,7 +375,6 @@ jobs:
           \usepackage{placeins} % 用于控制浮动体位置
           \usepackage{mdframed} % 用于创建带背景的引用块
           \usepackage{xspace} % 用于正确处理波浪号
-          \usepackage{fvextra} % 更好的代码换行支持
           
           \definecolor{codebg}{rgb}{0.98,0.98,0.98}
           \definecolor{framecolor}{rgb}{0.8,0.8,0.8}
@@ -408,9 +407,6 @@ jobs:
             literate={~}{{\textasciitilde}}1,
             breaklines=true,
             prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookleftarrow\space}},
-            breakanywhere=true, % 允许在任何位置断行
-            breakbyspace=true,
-            breakbytoken=false,
             aboveskip=6pt,
             belowskip=6pt,
           }
@@ -441,11 +437,10 @@ jobs:
             literate={~}{{\textasciitilde}}1,
             breaklines=true,
             prebreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\hookleftarrow\space}},
-            breakanywhere=true, % 重要：允许在任何字符位置换行
-            breakbyspace=true,
-            breakbytoken=false,
             aboveskip=6pt,
             belowskip=6pt,
+            % 使用breakable选项来允许在任何位置断行
+            breakable=true,
           }
           
           % 引用块设置
