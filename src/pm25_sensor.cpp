@@ -18,7 +18,13 @@ constexpr uint16_t kSysVoltage = 5000;
 constexpr uint16_t kAdcMaxValue = 1024;
 #endif
 
-bool s_flag_first_read = true;
+static const uint8_t s_adc_buff_max = 10;
+
+bool g_flag_first_read = true;
+
+uint16_t g_adc_buffer[s_adc_buff_max] = {0};
+
+uint32_t g_adc_buff_sum = 0;
 
 }  // namespace
 
@@ -51,23 +57,23 @@ float Pm25Sensor::Read() const {
 }
 
 uint16_t Pm25Sensor::Filter(const uint16_t adc_value) const {
-  if (s_flag_first_read) {
-    s_flag_first_read = false;
-    for (uint8_t i = 0; i < adc_buff_max_; i++) {
-      adc_buffer_[i] = adc_value;
-      adc_buff_sum_ += adc_buffer_[i];
+  if (g_flag_first_read) {
+    g_flag_first_read = false;
+    for (uint8_t i = 0; i < s_adc_buff_max; i++) {
+      g_adc_buffer[i] = adc_value;
+      g_adc_buff_sum += g_adc_buffer[i];
     }
     return adc_value;
 
   } else {
-    adc_buff_sum_ -= adc_buffer_[0];
+    g_adc_buff_sum -= g_adc_buffer[0];
 
-    for (uint8_t i = 0; i < adc_buff_max_ - 1; i++) {
-      adc_buffer_[i] = adc_buffer_[i + 1];
+    for (uint8_t i = 0; i < s_adc_buff_max - 1; i++) {
+      g_adc_buffer[i] = g_adc_buffer[i + 1];
     }
-    adc_buffer_[adc_buff_max_ - 1] = adc_value;
-    adc_buff_sum_ += adc_buffer_[adc_buff_max_ - 1];
-    return adc_buff_sum_ / adc_buff_max_;
+    g_adc_buffer[s_adc_buff_max - 1] = adc_value;
+    g_adc_buff_sum += g_adc_buffer[s_adc_buff_max - 1];
+    return g_adc_buff_sum / s_adc_buff_max;
   }
 }
 

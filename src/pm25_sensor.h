@@ -58,14 +58,8 @@ class Pm25Sensor {
 
   uint16_t Filter(const uint16_t adc_value) const;
 
-  const uint8_t adc_buff_max = 10;
-
   uint8_t iled_pin_ = 0;
   uint8_t dust_pin_ = 0;
-
-  uint16_t adc_buffer_[adc_buff_max] = {0};
-
-  uint32_t adc_buff_sum_ = 0;
 };
 
 }  // namespace em
