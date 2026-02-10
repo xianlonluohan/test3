@@ -18,7 +18,7 @@ em::Pm25Sensor g_pm25_sensor(kILedPin, kDustPin);
 
 void setup() {
   Serial.begin(115200);
-  Serial.println(String(F("pm25 sensor lib version: ")) + em::Pm25Sensor::Version());
+
   g_pm25_sensor.Init();
   Serial.println(F("setup successful"));
 }
